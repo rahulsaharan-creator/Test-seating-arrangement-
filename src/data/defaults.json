@@ -1,0 +1,1465 @@
+{
+ "rooms": [
+  {
+   "building": "GP",
+   "room": "1",
+   "capacity": 54,
+   "enabled": true,
+   "note": "",
+   "cols": 5
+  },
+  {
+   "building": "GP",
+   "room": "2",
+   "capacity": 75,
+   "enabled": true,
+   "note": "",
+   "cols": 5
+  },
+  {
+   "building": "GP",
+   "room": "3",
+   "capacity": 65,
+   "enabled": true,
+   "note": "",
+   "cols": 5
+  },
+  {
+   "building": "GP",
+   "room": "5",
+   "capacity": 65,
+   "enabled": true,
+   "note": "",
+   "cols": 5
+  },
+  {
+   "building": "GP",
+   "room": "6",
+   "capacity": 76,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "M1",
+   "room": "4",
+   "capacity": 40,
+   "enabled": true,
+   "note": "",
+   "cols": 4
+  },
+  {
+   "building": "M1",
+   "room": "8",
+   "capacity": 36,
+   "enabled": true,
+   "note": "",
+   "cols": 4
+  },
+  {
+   "building": "M2",
+   "room": "1",
+   "capacity": 38,
+   "enabled": true,
+   "note": "",
+   "cols": 4
+  },
+  {
+   "building": "M2",
+   "room": "2",
+   "capacity": 48,
+   "enabled": true,
+   "note": "",
+   "cols": 5
+  },
+  {
+   "building": "M2",
+   "room": "3",
+   "capacity": 89,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "M2",
+   "room": "4",
+   "capacity": 90,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "M2",
+   "room": "5",
+   "capacity": 89,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "M2",
+   "room": "6",
+   "capacity": 90,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "M2",
+   "room": "7",
+   "capacity": 89,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "M2",
+   "room": "8",
+   "capacity": 90,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "M2",
+   "room": "9",
+   "capacity": 83,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "M3",
+   "room": "1",
+   "capacity": 84,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "M3",
+   "room": "2",
+   "capacity": 84,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "M3",
+   "room": "3",
+   "capacity": 96,
+   "enabled": true,
+   "note": "",
+   "cols": 8
+  },
+  {
+   "building": "M3",
+   "room": "4",
+   "capacity": 96,
+   "enabled": true,
+   "note": "",
+   "cols": 8
+  },
+  {
+   "building": "M3",
+   "room": "5",
+   "capacity": 77,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "M3",
+   "room": "6",
+   "capacity": 77,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "M3",
+   "room": "7",
+   "capacity": 77,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "M3",
+   "room": "8",
+   "capacity": 104,
+   "enabled": true,
+   "note": "",
+   "cols": 8
+  },
+  {
+   "building": "M3",
+   "room": "9",
+   "capacity": 104,
+   "enabled": true,
+   "note": "",
+   "cols": 8
+  },
+  {
+   "building": "M3",
+   "room": "10",
+   "capacity": 55,
+   "enabled": true,
+   "note": "",
+   "cols": 5
+  },
+  {
+   "building": "M3",
+   "room": "11",
+   "capacity": 44,
+   "enabled": true,
+   "note": "",
+   "cols": 4
+  },
+  {
+   "building": "M3 Old",
+   "room": "14",
+   "capacity": 91,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "M3 Old",
+   "room": "15",
+   "capacity": 91,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "M3 Old",
+   "room": "16",
+   "capacity": 77,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "M3 Old",
+   "room": "17",
+   "capacity": 66,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "M3 Old",
+   "room": "18",
+   "capacity": 60,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "M3 Old",
+   "room": "19",
+   "capacity": 84,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "M3 Old",
+   "room": "20",
+   "capacity": 96,
+   "enabled": true,
+   "note": "",
+   "cols": 8
+  },
+  {
+   "building": "M3 Old",
+   "room": "21",
+   "capacity": 70,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "M3 Old",
+   "room": "22",
+   "capacity": 77,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "M3 Old",
+   "room": "23",
+   "capacity": 70,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "M4",
+   "room": "1",
+   "capacity": 91,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "M4",
+   "room": "2",
+   "capacity": 48,
+   "enabled": true,
+   "note": "",
+   "cols": 5
+  },
+  {
+   "building": "M4",
+   "room": "3",
+   "capacity": 91,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "M4",
+   "room": "4",
+   "capacity": 48,
+   "enabled": true,
+   "note": "",
+   "cols": 5
+  },
+  {
+   "building": "M4",
+   "room": "5",
+   "capacity": 91,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "M4",
+   "room": "6",
+   "capacity": 50,
+   "enabled": true,
+   "note": "",
+   "cols": 5
+  },
+  {
+   "building": "M4",
+   "room": "7",
+   "capacity": 91,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "M4",
+   "room": "8",
+   "capacity": 50,
+   "enabled": true,
+   "note": "",
+   "cols": 5
+  },
+  {
+   "building": "MHS-2",
+   "room": "1",
+   "capacity": 50,
+   "enabled": true,
+   "note": "",
+   "cols": 4
+  },
+  {
+   "building": "MHS-2",
+   "room": "2",
+   "capacity": 28,
+   "enabled": true,
+   "note": "",
+   "cols": 4
+  },
+  {
+   "building": "MHS-2",
+   "room": "3",
+   "capacity": 36,
+   "enabled": true,
+   "note": "",
+   "cols": 4
+  },
+  {
+   "building": "MHS-2",
+   "room": "5",
+   "capacity": 28,
+   "enabled": true,
+   "note": "",
+   "cols": 4
+  },
+  {
+   "building": "MHS-2",
+   "room": "6",
+   "capacity": 36,
+   "enabled": true,
+   "note": "",
+   "cols": 4
+  },
+  {
+   "building": "MHS-2",
+   "room": "7",
+   "capacity": 36,
+   "enabled": true,
+   "note": "",
+   "cols": 4
+  },
+  {
+   "building": "MHS-2",
+   "room": "9",
+   "capacity": 32,
+   "enabled": true,
+   "note": "",
+   "cols": 4
+  },
+  {
+   "building": "MHS-2",
+   "room": "10",
+   "capacity": 36,
+   "enabled": true,
+   "note": "",
+   "cols": 4
+  },
+  {
+   "building": "PC",
+   "room": "101(A)",
+   "capacity": 21,
+   "enabled": true,
+   "note": "",
+   "cols": 3
+  },
+  {
+   "building": "PC",
+   "room": "101(B)",
+   "capacity": 24,
+   "enabled": true,
+   "note": "",
+   "cols": 3
+  },
+  {
+   "building": "PC",
+   "room": "102",
+   "capacity": 20,
+   "enabled": true,
+   "note": "",
+   "cols": 4
+  },
+  {
+   "building": "PC",
+   "room": "103",
+   "capacity": 21,
+   "enabled": true,
+   "note": "",
+   "cols": 3
+  },
+  {
+   "building": "PC",
+   "room": "104",
+   "capacity": 20,
+   "enabled": true,
+   "note": "",
+   "cols": 4
+  },
+  {
+   "building": "PC",
+   "room": "105",
+   "capacity": 26,
+   "enabled": true,
+   "note": "",
+   "cols": 4
+  },
+  {
+   "building": "PC",
+   "room": "106",
+   "capacity": 30,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "PC",
+   "room": "107",
+   "capacity": 24,
+   "enabled": true,
+   "note": "From 4-Nov example sheet (not in room list)",
+   "cols": 0
+  },
+  {
+   "building": "PC",
+   "room": "201(A)",
+   "capacity": 21,
+   "enabled": true,
+   "note": "",
+   "cols": 3
+  },
+  {
+   "building": "PC",
+   "room": "201(B)",
+   "capacity": 24,
+   "enabled": true,
+   "note": "",
+   "cols": 3
+  },
+  {
+   "building": "PC",
+   "room": "202",
+   "capacity": 36,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "PC",
+   "room": "203",
+   "capacity": 30,
+   "enabled": true,
+   "note": "",
+   "cols": 5
+  },
+  {
+   "building": "PC",
+   "room": "204",
+   "capacity": 24,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "PC",
+   "room": "205",
+   "capacity": 24,
+   "enabled": true,
+   "note": "",
+   "cols": 3
+  },
+  {
+   "building": "PC",
+   "room": "301",
+   "capacity": 74,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "PC",
+   "room": "302",
+   "capacity": 49,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "PC",
+   "room": "303",
+   "capacity": 49,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "PC",
+   "room": "304",
+   "capacity": 80,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "PC",
+   "room": "401",
+   "capacity": 74,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "PC",
+   "room": "402",
+   "capacity": 49,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "PC",
+   "room": "403",
+   "capacity": 49,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "PC",
+   "room": "404",
+   "capacity": 80,
+   "enabled": true,
+   "note": "",
+   "cols": 7
+  },
+  {
+   "building": "MHS-1",
+   "room": "1",
+   "capacity": 42,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "MHS-1",
+   "room": "2",
+   "capacity": 36,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "MHS-1",
+   "room": "3",
+   "capacity": 30,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "MHS-1",
+   "room": "4",
+   "capacity": 36,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "MHS-1",
+   "room": "5",
+   "capacity": 30,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "MHS-1",
+   "room": "6",
+   "capacity": 42,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "MHS-1",
+   "room": "7",
+   "capacity": 36,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "MHS-1",
+   "room": "8",
+   "capacity": 30,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "MHS-1",
+   "room": "9",
+   "capacity": 36,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "MHS-1",
+   "room": "10",
+   "capacity": 30,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "MHS-1",
+   "room": "11",
+   "capacity": 45,
+   "enabled": true,
+   "note": "",
+   "cols": 5
+  },
+  {
+   "building": "MHS-1",
+   "room": "12",
+   "capacity": 50,
+   "enabled": true,
+   "note": "",
+   "cols": 5
+  },
+  {
+   "building": "MHS-1",
+   "room": "13",
+   "capacity": 36,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "MHS-1",
+   "room": "14",
+   "capacity": 30,
+   "enabled": true,
+   "note": "",
+   "cols": 6
+  },
+  {
+   "building": "MHS-1",
+   "room": "15",
+   "capacity": 51,
+   "enabled": true,
+   "note": "",
+   "cols": 5
+  },
+  {
+   "building": "MND-2",
+   "room": "1",
+   "capacity": 112,
+   "enabled": true,
+   "note": "",
+   "cols": 8
+  },
+  {
+   "building": "MND-2",
+   "room": "2",
+   "capacity": 112,
+   "enabled": true,
+   "note": "",
+   "cols": 8
+  },
+  {
+   "building": "MND-2",
+   "room": "3",
+   "capacity": 120,
+   "enabled": true,
+   "note": "",
+   "cols": 8
+  },
+  {
+   "building": "MND-2",
+   "room": "4",
+   "capacity": 104,
+   "enabled": false,
+   "note": "Self Study",
+   "cols": 8
+  },
+  {
+   "building": "MND-2",
+   "room": "5",
+   "capacity": 104,
+   "enabled": false,
+   "note": "Self Study",
+   "cols": 8
+  },
+  {
+   "building": "MND-2",
+   "room": "6",
+   "capacity": 104,
+   "enabled": true,
+   "note": "",
+   "cols": 8
+  },
+  {
+   "building": "MND-2",
+   "room": "7",
+   "capacity": 104,
+   "enabled": true,
+   "note": "",
+   "cols": 8
+  },
+  {
+   "building": "MND-2",
+   "room": "8",
+   "capacity": 104,
+   "enabled": true,
+   "note": "",
+   "cols": 8
+  },
+  {
+   "building": "MND-2",
+   "room": "10",
+   "capacity": 112,
+   "enabled": true,
+   "note": "",
+   "cols": 8
+  },
+  {
+   "building": "MND-2",
+   "room": "11",
+   "capacity": 112,
+   "enabled": true,
+   "note": "",
+   "cols": 8
+  },
+  {
+   "building": "MND-2",
+   "room": "12",
+   "capacity": 112,
+   "enabled": true,
+   "note": "",
+   "cols": 8
+  },
+  {
+   "building": "MND-2",
+   "room": "13",
+   "capacity": 112,
+   "enabled": true,
+   "note": "",
+   "cols": 8
+  }
+ ],
+ "labs": [
+  {
+   "building": "PC",
+   "room": "PC-LAB",
+   "capacity": 19,
+   "enabled": true,
+   "note": "",
+   "cols": 0
+  },
+  {
+   "building": "M1",
+   "room": "LAB-1",
+   "capacity": 66,
+   "enabled": true,
+   "note": "Total systems 72",
+   "cols": 0
+  },
+  {
+   "building": "M3",
+   "room": "LAB-3",
+   "capacity": 236,
+   "enabled": true,
+   "note": "Total systems 243",
+   "cols": 0
+  },
+  {
+   "building": "LAB2",
+   "room": "LAB-2",
+   "capacity": 112,
+   "enabled": true,
+   "note": "Total systems 125",
+   "cols": 0
+  },
+  {
+   "building": "LAB4",
+   "room": "LAB4-B1",
+   "capacity": 94,
+   "enabled": true,
+   "note": "Total systems 99",
+   "cols": 0
+  },
+  {
+   "building": "LAB4",
+   "room": "LAB4-G1",
+   "capacity": 86,
+   "enabled": true,
+   "note": "Total systems 93",
+   "cols": 0
+  },
+  {
+   "building": "LAB4",
+   "room": "LAB4-F1",
+   "capacity": 112,
+   "enabled": true,
+   "note": "Total systems 122",
+   "cols": 0
+  },
+  {
+   "building": "LAB4",
+   "room": "LAB4-F2",
+   "capacity": 112,
+   "enabled": true,
+   "note": "Total systems 121",
+   "cols": 0
+  },
+  {
+   "building": "LAB4",
+   "room": "LAB4-F3",
+   "capacity": 112,
+   "enabled": true,
+   "note": "Total systems 124",
+   "cols": 0
+  },
+  {
+   "building": "LAB4",
+   "room": "LAB4-F4",
+   "capacity": 112,
+   "enabled": true,
+   "note": "Total systems 123",
+   "cols": 0
+  },
+  {
+   "building": "MND-2",
+   "room": "LAB-MND2",
+   "capacity": 112,
+   "enabled": true,
+   "note": "Total systems 125",
+   "cols": 0
+  },
+  {
+   "building": "MHS-1",
+   "room": "LAB-MHS1",
+   "capacity": 46,
+   "enabled": true,
+   "note": "Total systems 50",
+   "cols": 0
+  }
+ ],
+ "batchMap": {
+  "ZA3": {
+   "building": "GP",
+   "room": "1",
+   "shift": "Morning"
+  },
+  "R1": {
+   "building": "GP",
+   "room": "1",
+   "shift": "Evening"
+  },
+  "RR1": {
+   "building": "GP",
+   "room": "2",
+   "shift": "Morning"
+  },
+  "RR4": {
+   "building": "GP",
+   "room": "2",
+   "shift": "Evening"
+  },
+  "RR5": {
+   "building": "GP",
+   "room": "3",
+   "shift": "Evening"
+  },
+  "RR3": {
+   "building": "GP",
+   "room": "5",
+   "shift": "Morning"
+  },
+  "RH2": {
+   "building": "GP",
+   "room": "5",
+   "shift": "Evening"
+  },
+  "RR2": {
+   "building": "GP",
+   "room": "6",
+   "shift": "Morning"
+  },
+  "RC1": {
+   "building": "GP",
+   "room": "6",
+   "shift": "Evening"
+  },
+  "XH6": {
+   "building": "M1",
+   "room": "4",
+   "shift": "Morning"
+  },
+  "XH2": {
+   "building": "M1",
+   "room": "4",
+   "shift": "Evening"
+  },
+  "DE0": {
+   "building": "M1",
+   "room": "8",
+   "shift": "Morning"
+  },
+  "I0A": {
+   "building": "M1",
+   "room": "8",
+   "shift": "Evening"
+  },
+  "YH2": {
+   "building": "M2",
+   "room": "1",
+   "shift": "Morning"
+  },
+  "ZA2": {
+   "building": "M2",
+   "room": "1",
+   "shift": "Evening"
+  },
+  "ZA4": {
+   "building": "M2",
+   "room": "2",
+   "shift": "Morning"
+  },
+  "I0B": {
+   "building": "M2",
+   "room": "2",
+   "shift": "Evening"
+  },
+  "DH1": {
+   "building": "M2",
+   "room": "3",
+   "shift": "Morning"
+  },
+  "P1": {
+   "building": "M2",
+   "room": "3",
+   "shift": "Evening"
+  },
+  "DE3": {
+   "building": "M2",
+   "room": "4",
+   "shift": "Morning"
+  },
+  "DE2": {
+   "building": "M2",
+   "room": "4",
+   "shift": "Evening"
+  },
+  "DE5": {
+   "building": "M2",
+   "room": "5",
+   "shift": "Morning"
+  },
+  "CE1": {
+   "building": "M2",
+   "room": "5",
+   "shift": "Evening"
+  },
+  "AE1": {
+   "building": "M2",
+   "room": "6",
+   "shift": "Morning"
+  },
+  "RB1": {
+   "building": "M2",
+   "room": "6",
+   "shift": "Evening"
+  },
+  "CE2": {
+   "building": "M2",
+   "room": "7",
+   "shift": "Morning"
+  },
+  "DE4": {
+   "building": "M2",
+   "room": "7",
+   "shift": "Evening"
+  },
+  "CE3": {
+   "building": "M2",
+   "room": "8",
+   "shift": "Morning"
+  },
+  "CH1": {
+   "building": "M2",
+   "room": "8",
+   "shift": "Evening"
+  },
+  "DE1": {
+   "building": "M2",
+   "room": "9",
+   "shift": "Morning"
+  },
+  "CB1": {
+   "building": "M2",
+   "room": "9",
+   "shift": "Evening"
+  },
+  "ICB1": {
+   "building": "M2",
+   "room": "9",
+   "shift": "Evening"
+  },
+  "YA3": {
+   "building": "M3",
+   "room": "1",
+   "shift": "Morning"
+  },
+  "YA2": {
+   "building": "M3",
+   "room": "1",
+   "shift": "Evening"
+  },
+  "XG4": {
+   "building": "M3",
+   "room": "2",
+   "shift": "Morning"
+  },
+  "YA1": {
+   "building": "M3",
+   "room": "2",
+   "shift": "Evening"
+  },
+  "AE3": {
+   "building": "M3",
+   "room": "3",
+   "shift": "Morning"
+  },
+  "BE3": {
+   "building": "M3",
+   "room": "3",
+   "shift": "Evening"
+  },
+  "AH2": {
+   "building": "M3",
+   "room": "4",
+   "shift": "Morning"
+  },
+  "BH1": {
+   "building": "M3",
+   "room": "4",
+   "shift": "Evening"
+  },
+  "YA4": {
+   "building": "M3",
+   "room": "5",
+   "shift": "Morning"
+  },
+  "XD1": {
+   "building": "M3",
+   "room": "5",
+   "shift": "Evening"
+  },
+  "XG3": {
+   "building": "M3",
+   "room": "6",
+   "shift": "Morning"
+  },
+  "XE4": {
+   "building": "M3",
+   "room": "6",
+   "shift": "Evening"
+  },
+  "XF1": {
+   "building": "M3",
+   "room": "7",
+   "shift": "Morning"
+  },
+  "YC3": {
+   "building": "M3",
+   "room": "7",
+   "shift": "Evening"
+  },
+  "BE2": {
+   "building": "M3",
+   "room": "8",
+   "shift": "Morning"
+  },
+  "BE1": {
+   "building": "M3",
+   "room": "8",
+   "shift": "Evening"
+  },
+  "BH2": {
+   "building": "M3",
+   "room": "9",
+   "shift": "Morning"
+  },
+  "Y1": {
+   "building": "M3",
+   "room": "9",
+   "shift": "Evening"
+  },
+  "XF4": {
+   "building": "M3",
+   "room": "10",
+   "shift": "Morning"
+  },
+  "XA1": {
+   "building": "M3",
+   "room": "10",
+   "shift": "Evening"
+  },
+  "YC2": {
+   "building": "M3",
+   "room": "11",
+   "shift": "Morning"
+  },
+  "XE1": {
+   "building": "M3",
+   "room": "11",
+   "shift": "Evening"
+  },
+  "RH3": {
+   "building": "M3 Old",
+   "room": "14",
+   "shift": "Morning"
+  },
+  "RH1": {
+   "building": "M3 Old",
+   "room": "15",
+   "shift": "Morning"
+  },
+  "AH1": {
+   "building": "M3 Old",
+   "room": "15",
+   "shift": "Evening"
+  },
+  "IEN2": {
+   "building": "M3 Old",
+   "room": "16",
+   "shift": "Morning"
+  },
+  "XD4": {
+   "building": "M3 Old",
+   "room": "16",
+   "shift": "Evening"
+  },
+  "XA2": {
+   "building": "M3 Old",
+   "room": "17",
+   "shift": "Morning"
+  },
+  "IHN1": {
+   "building": "M3 Old",
+   "room": "17",
+   "shift": "Evening"
+  },
+  "XD2": {
+   "building": "M3 Old",
+   "room": "18",
+   "shift": "Morning"
+  },
+  "XF3": {
+   "building": "M3 Old",
+   "room": "18",
+   "shift": "Evening"
+  },
+  "RR7": {
+   "building": "M3 Old",
+   "room": "19",
+   "shift": "Morning"
+  },
+  "IEN1": {
+   "building": "M3 Old",
+   "room": "19",
+   "shift": "Evening"
+  },
+  "RR6": {
+   "building": "M3 Old",
+   "room": "20",
+   "shift": "Morning"
+  },
+  "AE2": {
+   "building": "M3 Old",
+   "room": "20",
+   "shift": "Evening"
+  },
+  "XD3": {
+   "building": "M3 Old",
+   "room": "21",
+   "shift": "Morning"
+  },
+  "XF2": {
+   "building": "M3 Old",
+   "room": "21",
+   "shift": "Evening"
+  },
+  "XE2": {
+   "building": "M3 Old",
+   "room": "22",
+   "shift": "Morning"
+  },
+  "XG2": {
+   "building": "M3 Old",
+   "room": "22",
+   "shift": "Evening"
+  },
+  "XE3": {
+   "building": "M3 Old",
+   "room": "23",
+   "shift": "Morning"
+  },
+  "XG1": {
+   "building": "M3 Old",
+   "room": "23",
+   "shift": "Evening"
+  },
+  "PR2": {
+   "building": "M4",
+   "room": "1",
+   "shift": "Morning"
+  },
+  "PC3": {
+   "building": "M4",
+   "room": "1",
+   "shift": "Evening"
+  },
+  "P0": {
+   "building": "M4",
+   "room": "2",
+   "shift": "Morning"
+  },
+  "Q0": {
+   "building": "M4",
+   "room": "2",
+   "shift": "Evening"
+  },
+  "PR4": {
+   "building": "M4",
+   "room": "3",
+   "shift": "Morning"
+  },
+  "PR3": {
+   "building": "M4",
+   "room": "3",
+   "shift": "Evening"
+  },
+  "YC4": {
+   "building": "M4",
+   "room": "4",
+   "shift": "Morning"
+  },
+  "YC1": {
+   "building": "M4",
+   "room": "4",
+   "shift": "Evening"
+  },
+  "PC2": {
+   "building": "M4",
+   "room": "5",
+   "shift": "Morning"
+  },
+  "PC1": {
+   "building": "M4",
+   "room": "5",
+   "shift": "Evening"
+  },
+  "YD1": {
+   "building": "M4",
+   "room": "6",
+   "shift": "Morning"
+  },
+  "ZA1": {
+   "building": "M4",
+   "room": "6",
+   "shift": "Evening"
+  },
+  "XH3": {
+   "building": "M4",
+   "room": "7",
+   "shift": "Morning"
+  },
+  "PR1": {
+   "building": "M4",
+   "room": "7",
+   "shift": "Evening"
+  },
+  "YD3": {
+   "building": "M4",
+   "room": "8",
+   "shift": "Morning"
+  },
+  "YD2": {
+   "building": "M4",
+   "room": "8",
+   "shift": "Evening"
+  },
+  "DH0": {
+   "building": "MHS-2",
+   "room": "1",
+   "shift": "Morning"
+  },
+  "X1": {
+   "building": "MHS-2",
+   "room": "2",
+   "shift": "Morning"
+  },
+  "YH1": {
+   "building": "MHS-2",
+   "room": "3",
+   "shift": "Morning"
+  },
+  "XH1": {
+   "building": "MHS-2",
+   "room": "3",
+   "shift": "Evening"
+  },
+  "XH4": {
+   "building": "MHS-2",
+   "room": "5",
+   "shift": "Morning"
+  },
+  "XH5": {
+   "building": "MHS-2",
+   "room": "5",
+   "shift": "Evening"
+  },
+  "YH3": {
+   "building": "MHS-2",
+   "room": "6",
+   "shift": "Morning"
+  },
+  "IH1": {
+   "building": "MHS-2",
+   "room": "7",
+   "shift": "Morning"
+  },
+  "XB3": {
+   "building": "PC",
+   "room": "301",
+   "shift": "Morning"
+  },
+  "XC1": {
+   "building": "PC",
+   "room": "302",
+   "shift": "Evening"
+  },
+  "XB1": {
+   "building": "PC",
+   "room": "303",
+   "shift": "Morning"
+  },
+  "XC2": {
+   "building": "PC",
+   "room": "304",
+   "shift": "Morning"
+  },
+  "XB2": {
+   "building": "PC",
+   "room": "304",
+   "shift": "Evening"
+  },
+  "XC3": {
+   "building": "PC",
+   "room": "401",
+   "shift": "Morning"
+  },
+  "YB1": {
+   "building": "PC",
+   "room": "402",
+   "shift": "Evening"
+  },
+  "YB2": {
+   "building": "PC",
+   "room": "403",
+   "shift": "Morning"
+  },
+  "ZB1": {
+   "building": "PC",
+   "room": "404",
+   "shift": "Morning"
+  }
+ },
+ "buildingOrder": [
+  "GP",
+  "M1",
+  "M2",
+  "M3",
+  "M3 Old",
+  "M4",
+  "MHS-2",
+  "MHS-1",
+  "MND-2",
+  "PC"
+ ],
+ "farBuildings": [
+  "PC"
+ ]
+}
