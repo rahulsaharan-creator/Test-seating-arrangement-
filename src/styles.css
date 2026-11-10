@@ -248,3 +248,19 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -.01em; margin: 28px 0 8
 .slottabs button.on { border-color: var(--accent); background: linear-gradient(180deg, var(--accent-soft), var(--card)); }
 .slottabs button.on b { color: var(--accent); }
 .rc-bar .taken { background: var(--line); }
+
+/* v3: optional step, slot choice, batch in another slot */
+.st.opt span::after { content: " (optional)"; font-weight: 500; font-size: 12px; opacity: .8; }
+.choice { margin-top: 18px; }
+.choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; margin-top: 10px; }
+.choices label { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--line2); border-radius: 14px; cursor: pointer; }
+.choices label.on { border-color: var(--accent); background: var(--accent-soft); }
+.choices input { margin-top: 4px; accent-color: var(--accent); }
+.choices b { display: block; }
+.choices small { display: block; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.batch.other { opacity: .6; }
+.batch.other:hover { opacity: 1; }
+.muted-pill { margin-left: auto; background: var(--card2); color: var(--muted); }
+.slottabs button.warn span { color: var(--red); }
+.fold > summary .muted { font-weight: 500; font-size: 13.5px; }
+.fold .rbldg:first-of-type { margin-top: 8px; }

@@ -37,10 +37,12 @@ export async function readAdmissions(ExcelJS, buffer) {
   await wb.xlsx.load(buffer);
   for (const ws of wb.worksheets) {
     const rows = sheetRows(ws);
-    const hi = rows.findIndex((r) => r.some((v) => norm(v || '') === 'rollnumber') && r.some((v) => norm(v || '') === 'batch'));
+    // common header variants are accepted (Roll_No., Reg No, Name, ...)
+    const ALIAS = { rollnumber: ['rollnumber', 'rollno', 'roll', 'regno', 'registrationno', 'registrationnumber'], studentname: ['studentname', 'name', 'studentsname'] };
+    const hi = rows.findIndex((r) => r.some((v) => ALIAS.rollnumber.includes(norm(v || ''))) && r.some((v) => norm(v || '') === 'batch'));
     if (hi < 0) continue;
     const head = rows[hi].map((h) => norm(h || ''));
-    const col = (name) => head.indexOf(norm(name));
+    const col = (name) => { const k = norm(name); for (const a of ALIAS[k] || [k]) { const i = head.indexOf(a); if (i >= 0) return i; } return -1; };
     const ix = {
       roll: col('Roll_Number'), name: col('Student_Name'), gender: col('Gender'), course: col('Course'),
       batch: col('Batch'), medium: col('Medium'), status: col('Status'),
