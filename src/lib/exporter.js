@@ -50,7 +50,11 @@ export function buildWorkbook(ExcelJS, result, meta) {
   const phases = [...new Set(rows.map((r) => r.CB))].sort();
   const rooms = result.usedRooms;
   const dateVal = (() => { const { y, m, d } = parseDate(meta.dateISO); return new Date(Date.UTC(y, m - 1, d)); })();
-  const shiftLabels = meta.shifts.map(fmtTime);
+  const shiftLabels = meta.slots && meta.slots.length
+    ? meta.slots.map((s) => (s.label ? `${s.label}: ` : '') + fmtTime(s.start) + (s.end ? ` to ${fmtTime(s.end)}` : ''))
+    : meta.shifts.map(fmtTime);
+  const shiftCols = shiftLabels.map((_, i) => `Shift ${i + 1}`);
+  if (shiftCols.length < 2) shiftCols.push('Shift 2');
 
   // ---------- Raw_Data
   {
@@ -70,13 +74,13 @@ export function buildWorkbook(ExcelJS, result, meta) {
   // ---------- Student_list
   {
     const ws = wb.addWorksheet('Student_list');
-    const heads = ['Roll_Number','Student_Name','Gender','Course','Batch','Medium','Date','Shift 1','Shift 2','Building','Room No.','Seat No.','CB','Mode'];
+    const heads = ['Roll_Number','Student_Name','Gender','Course','Batch','Medium','Date',...shiftCols,'Building','Room No.','Seat No.','CB','Mode'];
     ws.columns = heads.map((h) => ({ header: h, key: h, width: h === 'Student_Name' ? 30 : 12 }));
     ws.getRow(1).eachCell((c) => style(c, { bold: true, size: 11, color: C.green, bg: C.headFill }));
     for (const r of rows) {
       ws.addRow({
         ...r, Roll_Number: asNum(r.Roll_Number), Date: dateVal,
-        'Shift 1': shiftLabels[0] || '', 'Shift 2': shiftLabels[1] || '', 'Room No.': roomVal(r['Room No.']),
+        ...Object.fromEntries(shiftCols.map((c, i) => [c, shiftLabels[i] || ''])), 'Room No.': roomVal(r['Room No.']),
       });
     }
     ws.getColumn('Date').numFmt = 'dd-mm-yyyy';
