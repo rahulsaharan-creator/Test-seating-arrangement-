@@ -37,6 +37,11 @@ const STEPS = [
   { id: 'result', label: 'Seating' },
 ];
 const pl = (n, w) => `${n.toLocaleString('en-IN')} ${w}${n === 1 ? '' : 's'}`;
+const mins = (t) => { const [h, m] = String(t || '0:0').split(':').map(Number); return h * 60 + m; };
+// A slot with no end time is taken to last 3 hours
+const endOf = (s) => (s.end ? mins(s.end) : mins(s.start) + 180);
+export const overlaps = (a, b) => a.id === b.id || (mins(a.start) < endOf(b) && mins(b.start) < endOf(a));
+const slotName = (s, i) => s.label || `Slot ${i + 1}`;
 
 const Ico = {
   upload: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 20h16" /></svg>,
@@ -79,8 +84,10 @@ export default function App() {
   const [test, setTest] = useState(initialTest);
   const [selected, setSelected] = useState(() => new Set());
   const [mode, setMode] = useState({});
+  const [slotOf, setSlotOf] = useState({});
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9));
-  const [result, setResult] = useState(null);
+  const [result, setResult] = useState(null); // [{ slot, result, students, batches, taken }]
+  const [view, setView] = useState(0);
 
   useEffect(() => {
     try { localStorage.setItem(STORE, JSON.stringify(settings)); } catch { /* ignore */ }
@@ -102,10 +109,20 @@ export default function App() {
 
   const chosen = batches.filter((b) => selected.has(b.batch));
   const missingBuilding = chosen.filter((b) => !settings.batchMap[b.batch]?.building);
-  const need = {
-    offline: chosen.filter((b) => mode[b.batch] !== 'Online').reduce((a, b) => a + b.count, 0),
-    online: chosen.filter((b) => mode[b.batch] === 'Online').reduce((a, b) => a + b.count, 0),
-  };
+  const slotIds = test.slots.map((s) => s.id);
+  const slotFor = (batch) => (slotIds.includes(slotOf[batch]) ? slotOf[batch] : slotIds[0]);
+  const needOf = (list) => ({
+    offline: list.filter((b) => mode[b.batch] !== 'Online').reduce((a, b) => a + b.count, 0),
+    online: list.filter((b) => mode[b.batch] === 'Online').reduce((a, b) => a + b.count, 0),
+  });
+  // Seats needed at the busiest moment: a slot plus every slot that overlaps it
+  const perSlot = test.slots.map((s) => ({ slot: s, ...needOf(chosen.filter((b) => slotFor(b.batch) === s.id)) }));
+  const need = perSlot.reduce((best, x) => {
+    const over = perSlot.filter((y) => overlaps(x.slot, y.slot));
+    const n = { offline: over.reduce((a, y) => a + y.offline, 0), online: over.reduce((a, y) => a + y.online, 0) };
+    return n.offline + n.online > best.offline + best.online ? n : best;
+  }, { offline: 0, online: 0 });
+  const appearing = chosen.reduce((a, b) => a + b.count, 0);
   const have = {
     offline: settings.rooms.filter((r) => r.enabled).reduce((a, r) => a + Number(r.capacity || 0), 0),
     online: settings.labs.filter((r) => r.enabled).reduce((a, r) => a + Number(r.capacity || 0), 0),
@@ -135,13 +152,14 @@ export default function App() {
       const again = (last?.batches || []).filter((b) => names.has(b));
       setSelected(new Set(again));
       setMode(Object.fromEntries(Object.entries(last?.mode || {}).filter(([b]) => names.has(b))));
+      setSlotOf(Object.fromEntries(Object.entries(last?.slotOf || {}).filter(([b]) => names.has(b))));
       if (again.length) setNotice(`${pl(again.length, 'batch')} from the last test ticked again. Change them on the Batches step.`);
     } catch (e) { setError(`Could not read “${file.name}”: ${e.message}`); }
     setBusy('');
   }
   function removeAdmission() {
     if (!confirm('Remove the admission list from this page? Your rooms and settings stay.')) return;
-    setAdm(null); setSelected(new Set()); setMode({}); setResult(null); setNotice(''); setStep('students');
+    setAdm(null); setSelected(new Set()); setMode({}); setSlotOf({}); setResult(null); setNotice(''); setStep('students');
   }
   async function onRoomFile(file) {
     if (!file) return;
@@ -166,35 +184,61 @@ export default function App() {
     setBusy('');
   }
 
+  // One seating per slot. Slots are seated in time order; a slot that overlaps an earlier one
+  // starts each room's seat numbers after the seats that slot already uses, so no seat is used twice at once.
   function run(newSeed = seed) {
-    const students = adm.students.filter((s) => selected.has(s.Batch));
     const batchBuilding = Object.fromEntries(Object.entries(settings.batchMap).map(([k, v]) => [k, v.building]));
     const batchMode = Object.fromEntries(chosen.map((b) => [b.batch, mode[b.batch] || 'Offline']));
-    const r = allocate(students, {
-      rooms: settings.rooms, labs: settings.labs, batchBuilding, batchMode,
-      buildingOrder: settings.buildingOrder, farBuildings: settings.farBuildings, seed: newSeed,
-    });
-    setResult(r); setSeed(newSeed); setStep('result');
-    try { localStorage.setItem(LAST, JSON.stringify({ title: test.title, slots: test.slots, batches: [...selected], mode })); } catch { /* ignore */ }
+    const order = test.slots.map((s, i) => ({ s, i })).sort((a, b) => mins(a.s.start) - mins(b.s.start) || a.i - b.i);
+    const done = [];
+    for (const { s, i } of order) {
+      const bs = chosen.filter((b) => slotFor(b.batch) === s.id);
+      const taken = {};
+      for (const d of done) {
+        if (!overlaps(d.slot, s)) continue;
+        for (const room of d.result.usedRooms) {
+          const k = `${room.building}|${room.room}`;
+          taken[k] = Math.max(taken[k] || 0, room.taken + room.used);
+        }
+      }
+      const students = adm.students.filter((st) => bs.some((b) => b.batch === st.Batch));
+      const r = allocate(students, {
+        rooms: settings.rooms, labs: settings.labs, batchBuilding, batchMode,
+        buildingOrder: settings.buildingOrder, farBuildings: settings.farBuildings, seed: newSeed + i, taken,
+      });
+      done.push({ slot: s, index: i, result: r, batches: bs, students: students.length, overlapsWith: done.filter((d) => overlaps(d.slot, s)).map((d) => d.index) });
+    }
+    done.sort((a, b) => a.index - b.index);
+    setResult(done); setSeed(newSeed); setView(0); setStep('result');
+    try { localStorage.setItem(LAST, JSON.stringify({ title: test.title, slots: test.slots, batches: [...selected], mode, slotOf })); } catch { /* ignore */ }
   }
 
-  const courses = [...new Set(chosen.map((b) => b.course))];
-  const meta = {
-    title: test.title || `${courses.join(' & ') || 'Test'} Seating Arrangement`,
-    dateISO: test.date,
-    shifts: test.slots.map((s) => s.start),
-    slots: test.slots,
-    batchesLabel: [...new Set(chosen.map((b) => b.batch.slice(0, 2)))].sort().join(', '),
-    modeLabel: need.online && need.offline ? 'Offline + Online Test' : need.online ? 'Online Test' : 'Offline Test',
+  const metaFor = (x) => {
+    const courses = [...new Set(x.batches.map((b) => b.course))];
+    const n = needOf(x.batches);
+    const base = test.title || `${courses.join(' & ') || 'Test'} Seating Arrangement`;
+    return {
+      title: test.slots.length > 1 ? `${base} - ${slotName(x.slot, x.index)}` : base,
+      dateISO: test.date,
+      shifts: [x.slot.start],
+      slots: [x.slot],
+      batchesLabel: [...new Set(x.batches.map((b) => b.batch.slice(0, 2)))].sort().join(', '),
+      modeLabel: n.online && n.offline ? 'Offline + Online Test' : n.online ? 'Online Test' : 'Offline Test',
+    };
   };
 
-  async function download() {
-    setBusy('Building the Excel file…');
+  async function download(list) {
+    setBusy(list.length > 1 ? `Building ${list.length} Excel files…` : 'Building the Excel file…');
     try {
       const ExcelJS = await loadExcel();
-      const wb = buildWorkbook(ExcelJS, result, meta);
-      const buf = await wb.xlsx.writeBuffer();
-      saveBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${meta.title.replace(/[^\w]+/g, '_')}_${fmtDateDMY(test.date)}.xlsx`);
+      for (const x of list) {
+        if (!x.result.assigned.length && !x.result.unseated.length) continue;
+        const meta = metaFor(x);
+        const wb = buildWorkbook(ExcelJS, x.result, meta);
+        const buf = await wb.xlsx.writeBuffer();
+        saveBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${meta.title.replace(/[^\w]+/g, '_')}_${fmtDateDMY(test.date)}.xlsx`);
+        await new Promise((r) => setTimeout(r, 400));
+      }
     } catch (e) { setError(`Could not build the file: ${e.message}`); }
     setBusy('');
   }
@@ -228,7 +272,7 @@ export default function App() {
         <div className="sumbar" role="status">
           <span><b>{adm.students.length.toLocaleString('en-IN')}</b> active students</span>
           <span><b>{chosen.length}</b> of {batches.length} batches ticked</span>
-          <span><b>{(need.offline + need.online).toLocaleString('en-IN')}</b> appearing</span>
+          <span><b>{appearing.toLocaleString('en-IN')}</b> appearing</span>
           <span><b>{test.slots.length}</b> {test.slots.length === 1 ? 'slot' : 'slots'}</span>
           <span className={seatsShort ? 'bad' : chosen.length ? 'good' : ''}><b>{(have.offline + have.online).toLocaleString('en-IN')}</b> seats on{seatsShort ? ` · ${seatsShort} short` : chosen.length ? ' · enough' : ''}</span>
         </div>
@@ -257,7 +301,7 @@ export default function App() {
 
         {step === 'batches' && (
           <BatchStep
-            batches={batches} selected={selected} setSelected={setSelected} mode={mode} setMode={setMode}
+            batches={batches} selected={selected} setSelected={setSelected} mode={mode} setMode={setMode} slots={test.slots} slotFor={slotFor} setSlotFor={(b, id) => setSlotOf({ ...slotOf, [b]: id })} perSlot={perSlot}
             settings={settings} setSettings={setSettings} allBuildings={allBuildings}
             need={need} missing={missingBuilding}
             back={() => setStep('test')} next={() => setStep('rooms')} nextOk={ready.batches}
@@ -265,13 +309,13 @@ export default function App() {
         )}
 
         {step === 'rooms' && (
-          <RoomStep settings={settings} setSettings={setSettings} need={need} have={have} chosen={chosen}
+          <RoomStep settings={settings} setSettings={setSettings} need={need} have={have} chosen={chosen} appearing={appearing} multi={test.slots.length > 1}
             onRoomFile={onRoomFile} onBatchFile={onBatchFile}
             back={() => setStep('batches')} create={() => run()} hasResult={!!result} />
         )}
 
         {step === 'result' && result && (
-          <ResultStep result={result} meta={meta} settings={settings} total={need.online + need.offline}
+          <ResultStep results={result} view={view} setView={setView} metaFor={metaFor} settings={settings}
             reshuffle={() => { if (confirm('Reshuffle every seat? The current seating is replaced.')) run(Math.floor(Math.random() * 1e9)); }}
             download={download} back={() => setStep('rooms')} />
         )}
@@ -387,7 +431,7 @@ function SlotStep({ test, setTest, slotsOk, back, next, nextOk }) {
   );
 }
 
-function BatchStep({ batches, selected, setSelected, mode, setMode, settings, setSettings, allBuildings, need, missing, back, next, nextOk }) {
+function BatchStep({ batches, selected, setSelected, mode, setMode, slots, slotFor, setSlotFor, perSlot, settings, setSettings, allBuildings, need, missing, back, next, nextOk }) {
   const [q, setQ] = useState('');
   const byCourse = {};
   for (const b of batches) if (!q || b.batch.toLowerCase().includes(q.toLowerCase())) (byCourse[b.course] ||= []).push(b);
@@ -397,7 +441,12 @@ function BatchStep({ batches, selected, setSelected, mode, setMode, settings, se
 
   return (
     <section>
-      <Head kicker="Step 3 of 4" title="Which batches are appearing?" lead="Tick each batch taking the test and choose Offline (classroom) or Online (computer lab). Students start in the building where their class is held." />
+      <Head kicker="Step 3 of 4" title="Which batches are appearing?" lead={slots.length > 1 ? "Tick each batch taking the test, choose its slot, and Offline (classroom) or Online (computer lab). Each slot gets its own seating." : "Tick each batch taking the test and choose Offline (classroom) or Online (computer lab). Students start in the building where their class is held."} />
+      {slots.length > 1 && (
+        <div className="slotsum">{perSlot.map((x, i) => (
+          <div key={x.slot.id}><span className="slot-n">{i + 1}</span><div><b>{slotName(x.slot, i)}</b><span className="muted small">{fmtTime(x.slot.start)}{x.slot.end ? ` to ${fmtTime(x.slot.end)}` : ''} · {x.offline + x.online} students</span></div></div>
+        ))}</div>
+      )}
       <div className="toolbar">
         <input className="search" type="search" placeholder="Find a batch, e.g. XB" value={q} onChange={(e) => setQ(e.target.value)} />
         <div className="tally"><b>{need.offline}</b> offline · <b>{need.online}</b> online</div>
@@ -436,6 +485,11 @@ function BatchStep({ batches, selected, setSelected, mode, setMode, settings, se
                             {allBuildings.map((x) => <option key={x}>{x}</option>)}
                           </select>
                         )}
+                        {slots.length > 1 && (
+                          <select className="slotsel" value={slotFor(b.batch)} onChange={(e) => setSlotFor(b.batch, e.target.value)} aria-label={`Slot for ${b.batch}`}>
+                            {slots.map((s, i) => <option key={s.id} value={s.id}>{slotName(s, i)} · {fmtTime(s.start)}</option>)}
+                          </select>
+                        )}
                         <div className="seg">
                           {['Offline', 'Online'].map((m) => (
                             <button key={m} className={(mode[b.batch] || 'Offline') === m ? 'on' : ''} onClick={() => setMode({ ...mode, [b.batch]: m })}>{m}</button>
@@ -455,7 +509,7 @@ function BatchStep({ batches, selected, setSelected, mode, setMode, settings, se
   );
 }
 
-function RoomStep({ settings, setSettings, need, have, chosen, onRoomFile, onBatchFile, back, create, hasResult }) {
+function RoomStep({ settings, setSettings, need, have, chosen, appearing, multi, onRoomFile, onBatchFile, back, create, hasResult }) {
   const homes = new Set(chosen.map((b) => settings.batchMap[b.batch]?.building));
   const editRoom = (kind, i, patch) => setSettings((s) => ({ ...s, [kind]: s[kind].map((r, j) => (j === i ? { ...r, ...patch } : r)) }));
   const move = (i, d) => setSettings((s) => {
@@ -476,7 +530,7 @@ function RoomStep({ settings, setSettings, need, have, chosen, onRoomFile, onBat
 
   return (
     <section>
-      <Head kicker="Step 4 of 4" title="Check rooms and capacity" lead="Switch off rooms that are busy at test time, or raise a capacity if extra seats are put in. Changes are saved in this browser." />
+      <Head kicker="Step 4 of 4" title="Check rooms and capacity" lead={multi ? "Switch off rooms that are busy at test time, or raise a capacity. Seats needed below are for the busiest time: a slot plus every slot that overlaps it. Slots that do not overlap reuse the same rooms." : "Switch off rooms that are busy at test time, or raise a capacity if extra seats are put in. Changes are saved in this browser."} />
       <div className="meters">
         <Meter label="Classroom seats" need={need.offline} have={have.offline} />
         <Meter label="Computer lab seats" need={need.online} have={have.online} />
@@ -521,7 +575,7 @@ function RoomStep({ settings, setSettings, need, have, chosen, onRoomFile, onBat
       </details>
 
       <div className="ctabar">
-        <div><b>{offShort || onShort ? 'Some students will have no seat' : 'Ready to create the seating'}</b><span className="muted">{need.offline + need.online} students in {chosen.length} batches. The seating opens on the next screen.</span></div>
+        <div><b>{offShort || onShort ? 'Some students will have no seat' : 'Ready to create the seating'}</b><span className="muted">{appearing} students in {chosen.length} batches{multi ? ", one seating per slot" : ""}. The seating opens on the next screen.</span></div>
         <div className="cta-row">
           <button className="btn ghost" onClick={back}>Back</button>
           <button className="btn cta" onClick={create}>{Ico.spark}{hasResult ? 'Create seating again' : 'Create seating'}</button>
@@ -575,26 +629,45 @@ function RoomTable({ title, kind, list, edit, open }) {
   );
 }
 
-function ResultStep({ result, meta, settings, total, reshuffle, download, back }) {
+function ResultStep({ results, view, setView, metaFor, settings, reshuffle, download, back }) {
   const [menu, setMenu] = useState(false);
+  const x = results[view] || results[0];
+  const result = x.result, meta = metaFor(x);
   const byBuilding = {};
   for (const r of result.usedRooms) (byBuilding[r.building] ||= []).push(r);
   const movedCount = result.moved.reduce((a, m) => a + m.count, 0);
   const homeOf = (s) => settings.batchMap[s.Batch]?.building;
-  const slotText = meta.slots.map((s, i) => `${s.label || `Slot ${i + 1}`} ${fmtTime(s.start)}${s.end ? `–${fmtTime(s.end)}` : ''}`).join(' · ');
+  const unseatedAll = results.reduce((a, y) => a + y.result.unseated.length, 0);
+  const multi = results.length > 1;
   return (
     <section>
-      <Head kicker="Seating ready" title={meta.title} lead={`${fmtDateDMY(meta.dateISO)} · ${slotText} · ${meta.modeLabel} · Batches ${meta.batchesLabel}`} />
-      {result.unseated.length > 0 && (
-        <div className="alert bad"><span><b>{result.unseated.length} students have no seat.</b> They are listed in the Not_Seated sheet. Go back to Rooms and switch on more rooms or raise capacities.</span><button className="btn sm" onClick={back}>Fix rooms</button></div>
+      <Head kicker={multi ? `Seating ready · ${results.length} slots` : 'Seating ready'} title={meta.title}
+        lead={`${fmtDateDMY(meta.dateISO)} · ${fmtTime(x.slot.start)}${x.slot.end ? ` to ${fmtTime(x.slot.end)}` : ''} · ${meta.modeLabel}${meta.batchesLabel ? ` · Batches ${meta.batchesLabel}` : ''}`} />
+      {multi && (
+        <div className="slottabs" role="tablist">
+          {results.map((y, i) => (
+            <button key={y.slot.id} role="tab" aria-selected={i === view} className={i === view ? 'on' : ''} onClick={() => setView(i)}>
+              <b>{slotName(y.slot, y.index)}</b>
+              <span>{fmtTime(y.slot.start)}{y.slot.end ? `–${fmtTime(y.slot.end)}` : ''} · {y.result.assigned.length} seated{y.result.unseated.length ? ` · ${y.result.unseated.length} no seat` : ''}</span>
+            </button>
+          ))}
+        </div>
       )}
+      {unseatedAll > 0 && (
+        <div className="alert bad"><span><b>{unseatedAll} students have no seat{multi ? ' across the slots' : ''}.</b> They are listed in the Not_Seated sheet. Go back to Rooms and switch on more rooms or raise capacities.</span><button className="btn sm" onClick={back}>Fix rooms</button></div>
+      )}
+      {x.overlapsWith.length > 0 && (
+        <div className="alert info"><span>This slot overlaps {x.overlapsWith.map((j) => slotName(results[j].slot, j)).join(', ')}. It uses the seats left free in each room, so no seat is used by two students at the same time.</span></div>
+      )}
+      {!x.batches.length && <div className="alert warn"><span>No batches are set to this slot. Choose the slot for each batch on the Batches step.</span></div>}
       <div className="actions">
-        <button className="btn cta" onClick={download}>{Ico.down}Download Excel</button>
+        <button className="btn cta" onClick={() => download([x])} disabled={!x.batches.length}>{Ico.down}{multi ? `Download ${slotName(x.slot, x.index)}` : 'Download Excel'}</button>
+        {multi && <button className="btn primary" onClick={() => download(results)}>{Ico.down}Download all slots ({results.filter((y) => y.batches.length).length} files)</button>}
         <div className="menu">
           <button className="btn ghost" onClick={() => setMenu(!menu)} aria-expanded={menu}>More ▾</button>
           {menu && (
             <div className="menu-list" onMouseLeave={() => setMenu(false)}>
-              <button onClick={() => { setMenu(false); reshuffle(); }}>Reshuffle seats<small>Every student gets a new seat</small></button>
+              <button onClick={() => { setMenu(false); reshuffle(); }}>Reshuffle seats<small>Every student in every slot gets a new seat</small></button>
               <button onClick={() => { setMenu(false); back(); }}>Change rooms<small>Back to rooms and capacity</small></button>
               <button onClick={() => { setMenu(false); window.print(); }}>Print this page<small>The seat fill summary</small></button>
             </div>
@@ -602,35 +675,35 @@ function ResultStep({ result, meta, settings, total, reshuffle, download, back }
         </div>
       </div>
       <div className="kpis">
-        <div><b>{result.assigned.length}</b><span>of {total} seated</span></div>
+        <div><b>{result.assigned.length}</b><span>of {x.students} seated</span></div>
         <div><b>{result.usedRooms.length}</b><span>rooms used</span></div>
         <div className={movedCount ? 'warn' : ''}><b>{movedCount}</b><span>moved to another building</span></div>
-        <div><b>{meta.slots.length}</b><span>attendance {meta.slots.length === 1 ? 'sheet' : 'sheets'}</span></div>
+        <div><b>{x.batches.length}</b><span>{x.batches.length === 1 ? 'batch' : 'batches'} in this slot</span></div>
       </div>
       {result.warnings.map((w) => <div key={w} className="alert warn"><span>{w}</span></div>)}
       {result.moved.length > 0 && <p className="muted">{result.moved.map((m) => `${m.count} from ${m.from} → ${m.to}`).join(' · ')}</p>}
 
       <h2>Rooms</h2>
-      <p className="muted">Each card is a room. Amber shows students moved in from another building.</p>
+      <p className="muted">Each card is a room. Amber shows students moved in from another building{x.overlapsWith.length ? '; grey shows seats used by an overlapping slot' : ''}.</p>
       {Object.entries(byBuilding).map(([b, rooms]) => (
         <div className="rbldg" key={b}>
           <div className="rb-head"><b>{b}</b><span className="muted">{rooms.reduce((a, r) => a + r.used, 0)} students · {rooms.length} rooms</span></div>
           <div className="rcards">
             {rooms.map((r) => {
               const movedIn = r.occupants.filter((s) => s.Mode === 'Offline' && homeOf(s) !== b).length;
-              const pct = Math.round((r.used / r.capacity) * 100);
+              const w = (n) => `${(n / r.capacity) * 100}%`;
               return (
-                <div className="rcard" key={r.room} title={`${b} room ${r.room}: ${r.used}/${r.capacity}${movedIn ? `, ${movedIn} moved in` : ''}`}>
+                <div className="rcard" key={r.room} title={`${b} room ${r.room}: ${r.used} in this slot${r.taken ? `, seats 1–${r.taken} used by an overlapping slot` : ''}`}>
                   <div className="rc-top"><b>{r.room}</b><span>{r.used}/{r.capacity}</span></div>
-                  <div className="rc-bar"><span className="home" style={{ width: `${((r.used - movedIn) / r.capacity) * 100}%` }} /><span className="moved" style={{ width: `${(movedIn / r.capacity) * 100}%` }} /></div>
-                  <span className="muted small">{pct}% full{movedIn ? ` · ${movedIn} moved in` : ''}</span>
+                  <div className="rc-bar"><span className="taken" style={{ width: w(r.taken) }} /><span className="home" style={{ width: w(r.used - movedIn) }} /><span className="moved" style={{ width: w(movedIn) }} /></div>
+                  <span className="muted small">{r.taken ? `Seats ${r.taken + 1}–${r.taken + r.used}` : `Seats 1–${r.used}`}{movedIn ? ` · ${movedIn} moved in` : ''}</span>
                 </div>
               );
             })}
           </div>
         </div>
       ))}
-      <p className="muted small">The Excel file has these sheets: Raw_Data, Student_list, Seating Arrangement, one attendance sheet per slot, SMD, Room_Layout, Master_List{result.unseated.length ? ', Not_Seated' : ''}.</p>
+      <p className="muted small">Each slot's Excel file has: Raw_Data, Student_list, Seating Arrangement, attendance sheet, SMD, Room_Layout, Master_List{result.unseated.length ? ', Not_Seated' : ''}.</p>
     </section>
   );
 }

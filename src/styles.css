@@ -235,3 +235,16 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -.01em; margin: 28px 0 8
 }
 @media print { .top, .sumbar, .actions, .foot, .busy { display: none; } body { background: #fff; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* Slots: per-slot summary, slot picker on batches, result tabs */
+.slotsum { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin: 0 0 16px; }
+.slotsum > div { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border: 1px solid var(--line2); border-radius: 14px; background: var(--card); box-shadow: var(--sh); }
+.slotsum b { display: block; font-size: 14px; }
+.slotsum .slot-n { margin: 0; flex: none; }
+.slotsel { width: 100%; padding: 5px 8px; font-size: 13px; border-color: var(--accent); }
+.slottabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin: 0 0 16px; }
+.slottabs button { flex: none; text-align: left; border: 1px solid var(--line2); background: var(--card); border-radius: 14px; padding: 10px 14px; cursor: pointer; box-shadow: var(--sh); }
+.slottabs button span { display: block; color: var(--muted); font-size: 12.5px; }
+.slottabs button.on { border-color: var(--accent); background: linear-gradient(180deg, var(--accent-soft), var(--card)); }
+.slottabs button.on b { color: var(--accent); }
+.rc-bar .taken { background: var(--line); }

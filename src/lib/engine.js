@@ -60,7 +60,8 @@ export function allocate(students, config) {
   const pool = (list) =>
     list
       .filter((r) => r.enabled && Number(r.capacity) > 0)
-      .map((r) => ({ ...r, capacity: Number(r.capacity), used: 0, occupants: [] }));
+      .map((r) => ({ ...r, capacity: Number(r.capacity), taken: Number((config.taken || {})[`${r.building}|${r.room}`] || 0), used: 0, occupants: [] }))
+      .filter((r) => r.capacity - r.taken > 0); // taken: seats already used by an overlapping slot
   const rooms = pool(config.rooms);
   const labs = pool(config.labs);
   const roomsByBuilding = {};
@@ -71,7 +72,7 @@ export function allocate(students, config) {
     const left = [];
     let i = 0;
     for (const room of roomList) {
-      while (i < queue.length && room.used < room.capacity) {
+      while (i < queue.length && room.taken + room.used < room.capacity) {
         room.occupants.push({ ...queue[i], Mode: mode });
         room.used++;
         i++;
@@ -148,7 +149,7 @@ export function allocate(students, config) {
   for (const room of [...labs, ...rooms]) {
     room.occupants.sort((a, b) => naturalCompare(a.Roll_Number, b.Roll_Number));
     room.occupants.forEach((s, idx) => {
-      assigned.push({ ...s, Building: room.building, 'Room No.': room.room, 'Seat No.': idx + 1, CB: phaseOf(s.Batch) });
+      assigned.push({ ...s, Building: room.building, 'Room No.': room.room, 'Seat No.': room.taken + idx + 1, CB: phaseOf(s.Batch) });
     });
   }
 
