@@ -140,9 +140,12 @@ export function allocate(students, config) {
       if (left.length) warnings.push(`${flag}: ${left.length} ${kind.toLowerCase()} students did not fit in the rooms kept for them and were seated with everyone else.`);
     }
 
-    // 3. Everyone else, shuffled together, in building order. Rooms kept for a group are used last.
+    // 3. Everyone else, shuffled together, in building order. Inside a building, rooms kept for a group
+    //    are used last, so their free seats are filled before anyone moves to the next building.
     const pinned = new Set(Object.values(config.pins || {}).flat());
-    const ordered = [...roomList.filter((r) => !pinned.has(roomKey(r))), ...roomList.filter((r) => pinned.has(roomKey(r)))];
+    const ordered = roomList.map((r, i) => ({ r, i }))
+      .sort((a, b) => rank(a.r.building) - rank(b.r.building) || pinned.has(roomKey(a.r)) - pinned.has(roomKey(b.r)) || a.i - b.i)
+      .map(({ r }) => r);
     const left = fill(shuffle(people, rng), ordered);
     if (left.length) {
       const g = left.filter(isGirl).length;

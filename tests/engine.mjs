@@ -74,6 +74,9 @@ const basic = (res, n) => {
   ok(['1', '2', '3', '4', '5'].every((r) => where[r] === 'GP|3'), 'monitoring and due fee students in GP room 3');
   ok(res.assigned.find((s) => s.Roll_Number === '1').Flag === 'Monitoring', 'flag carried to the sheet');
   ok(res.usedRooms.find((r) => r.room === '1').used === 30, 'others fill normal rooms first');
+  // kept room has free seats: others use them before moving to the next building
+  const r2 = allocate(mk(64, 'XA1'), { rooms: [...rooms, room('M1', 1, 50)], labs: [], buildingOrder: ['GP', 'M1'], flags, pins: { Monitoring: ['GP|3'] }, seed: 5 });
+  ok(!r2.assigned.some((s) => s.Building === 'M1') && r2.usedRooms.find((r) => r.building === 'GP' && r.room === '3').used === 4, 'free seats in a kept room are used before the next building');
 }
 
 // 5. SMD groups and overlapping papers

@@ -381,7 +381,7 @@ export default function App() {
         )}
 
         {step === 'result' && results && (
-          <ResultStep results={results} view={view} setView={setView} metaFor={metaFor} multi={multi}
+          <ResultStep results={results} view={view} setView={setView} metaFor={metaFor} multi={multi} order={useOrder}
             reshuffle={() => { if (confirm('Reshuffle every seat? The current seating is replaced.')) run(Math.floor(Math.random() * 1e9)); }}
             download={download} downloadBoard={downloadBoard} back={() => setStep('rooms')} />
         )}
@@ -851,12 +851,12 @@ function RoomTable({ title, kind, list, edit, use, labs }) {
   );
 }
 
-function ResultStep({ results, view, setView, metaFor, multi, reshuffle, download, downloadBoard, back }) {
+function ResultStep({ results, view, setView, metaFor, multi, order, reshuffle, download, downloadBoard, back }) {
   const [menu, setMenu] = useState(false);
   const x = results[view] || results[0];
   const result = x.result, meta = metaFor(x);
   const byBuilding = {};
-  for (const r of result.usedRooms) (byBuilding[r.building] ||= []).push(r);
+  for (const r of result.usedRooms.slice().sort((a, b) => order.indexOf(a.building) - order.indexOf(b.building) || (a.kind === 'Online') - (b.kind === 'Online'))) (byBuilding[r.building] ||= []).push(r);
   const special = result.assigned.filter((s) => s.Flag).length;
   const girls = result.assigned.filter(isGirl).length;
   const unseatedAll = results.reduce((a, y) => a + y.result.unseated.length, 0);
@@ -913,7 +913,7 @@ function ResultStep({ results, view, setView, metaFor, multi, reshuffle, downloa
         <p className="muted small">Green: students of this {multi ? 'paper' : 'test'}. Amber: monitoring, due fee or top batch students.{x.overlapsWith.length ? ' Grey: seats used by an overlapping paper.' : ''}</p>
         {Object.entries(byBuilding).map(([b, rooms]) => (
           <div className="rbldg" key={b}>
-            <div className="rb-head"><b>{b}</b><span className="muted">{rooms.reduce((a, r) => a + r.used, 0)} students · {rooms.length} rooms</span></div>
+            <div className="rb-head"><b>{b}</b><span className="muted">{pl(rooms.reduce((a, r) => a + r.used, 0), 'student')} · {pl(rooms.length, 'room')}</span></div>
             <div className="rcards">
               {rooms.map((r) => {
                 const sp = r.occupants.filter((s) => s.Flag).length;
@@ -923,7 +923,7 @@ function ResultStep({ results, view, setView, metaFor, multi, reshuffle, downloa
                   <div className="rcard" key={`${r.kind}${r.room}`} title={`${b} ${r.room}: ${r.used} students, ${g} girls${sp ? `, ${sp} special` : ''}${r.taken ? `, seats 1–${r.taken} used by an overlapping paper` : ''}`}>
                     <div className="rc-top"><b>{r.room}</b><span>{r.used}/{r.capacity}</span></div>
                     <div className="rc-bar"><span className="taken" style={{ width: w(r.taken) }} /><span className="home" style={{ width: w(r.used - sp) }} /><span className="moved" style={{ width: w(sp) }} /></div>
-                    <span className="muted small">Seats {r.taken + 1}–{r.taken + r.used} · {g} girls{sp ? ` · ${sp} special` : ''}</span>
+                    <span className="muted small">Seats {r.taken + 1}–{r.taken + r.used} · {pl(g, 'girl')}{sp ? ` · ${sp} special` : ''}</span>
                   </div>
                 );
               })}
