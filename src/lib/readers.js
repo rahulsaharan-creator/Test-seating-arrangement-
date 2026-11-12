@@ -127,3 +127,22 @@ export async function readBatchMap(ExcelJS, buffer) {
   if (!Object.keys(map).length) throw new Error('No batches found. Expected columns: Building, Floor, Room, Morning, Evening.');
   return map;
 }
+
+// Roll-number list (monitoring, due fee): any sheet; the column headed Roll/Reg, else the first column.
+export async function readRollList(ExcelJS, buffer) {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer);
+  const out = new Set();
+  for (const ws of wb.worksheets) {
+    const rows = sheetRows(ws);
+    const hi = rows.findIndex((r) => r.some((v) => /roll|reg/i.test(v || '')));
+    const col = hi >= 0 ? rows[hi].findIndex((v) => /roll|reg/i.test(v || '')) : 0;
+    for (const r of rows.slice(hi + 1)) { const v = String(r[col] || '').trim(); if (/^[A-Za-z0-9-]{3,}$/.test(v) && !/roll|reg/i.test(v)) out.add(v); }
+    if (out.size) break;
+  }
+  if (!out.size) throw new Error('No roll numbers found. Put them in a column headed Roll_Number.');
+  return [...out];
+}
+
+// Roll numbers pasted as text: commas, spaces or new lines between them.
+export const parseRolls = (text) => [...new Set(String(text || '').split(/[\s,;]+/).map((v) => v.trim()).filter(Boolean))];

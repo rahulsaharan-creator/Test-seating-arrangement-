@@ -74,7 +74,7 @@ export function buildWorkbook(ExcelJS, result, meta) {
   // ---------- Student_list
   {
     const ws = wb.addWorksheet('Student_list');
-    const heads = ['Roll_Number','Student_Name','Gender','Course','Batch','Medium','Date',...shiftCols,'Building','Room No.','Seat No.','CB','Mode'];
+    const heads = ['Roll_Number','Student_Name','Gender','Course','Batch','Medium','Date',...shiftCols,'Building','Room No.','Seat No.','CB','Mode','Flag'];
     ws.columns = heads.map((h) => ({ header: h, key: h, width: h === 'Student_Name' ? 30 : 12 }));
     ws.getRow(1).eachCell((c) => style(c, { bold: true, size: 11, color: C.green, bg: C.headFill }));
     for (const r of rows) {
@@ -84,7 +84,7 @@ export function buildWorkbook(ExcelJS, result, meta) {
       });
     }
     ws.getColumn('Date').numFmt = 'dd-mm-yyyy';
-    ws.autoFilter = { from: 'A1', to: 'N1' };
+    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: heads.length } };
     ws.views = [{ state: 'frozen', ySplit: 1 }];
   }
 
@@ -202,27 +202,10 @@ export function buildWorkbook(ExcelJS, result, meta) {
     }
   }
 
-  // ---------- Master_List: building entrance display
+  // ---------- Master_List: building entrance display (notice board)
   {
     const ws = wb.addWorksheet('Master_List');
-    ws.columns = [{ width: 12 }, { width: 11 }, { width: 11 }, { width: 12 }, { width: 15 }, { width: 15 }, { width: 30 }];
-    titleRow(ws, 1, `${meta.title} — BUILDING MASTER LIST`, 7, { bold: true, size: 16, color: C.navy, bg: C.titleFill, border: med });
-    titleRow(ws, 2, `Date: ${fmtDateDMY(meta.dateISO)}   Time: ${shiftLabels.join(' & ')}   —   Students check Room No. & Seat No. here`, 7,
-      { bold: true, size: 11, color: C.navy, bg: C.subFill });
-    let r = 4;
-    for (const b of [...new Set(rooms.map((x) => x.building))]) {
-      titleRow(ws, r++, b, 7, { bold: true, size: 12, color: C.navy, bg: C.titleFill });
-      ['Building', 'Room No.', 'Strength', 'Allotted', 'Reg. No. From', 'Reg. No. To', 'Batches'].forEach((h, i) => { const c = ws.getCell(r, i + 1); c.value = h; style(c, { bold: true, color: C.green, bg: C.headFill }); });
-      r++;
-      for (const room of rooms.filter((x) => x.building === b)) {
-        const occ = rows.filter((s) => s.Building === b && String(s['Room No.']) === String(room.room));
-        const batches = [...new Set(occ.map((s) => s.Batch))].sort().join(', ');
-        [b, roomVal(room.room), room.capacity, occ.length, asNum(occ[0]?.Roll_Number), asNum(occ[occ.length - 1]?.Roll_Number), batches]
-          .forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v ?? null; style(c); });
-        r++;
-      }
-      r++;
-    }
+    noticeBoard(ws, [{ title: meta.title, rows, rooms, shiftLabels }], meta);
   }
 
   // ---------- Not_Seated (only when someone could not get a seat)
@@ -230,10 +213,52 @@ export function buildWorkbook(ExcelJS, result, meta) {
     const ws = wb.addWorksheet('Not_Seated');
     ws.columns = ['Roll_Number', 'Student_Name', 'Batch', 'Course', 'Reason'].map((h) => ({ header: h, key: h, width: h === 'Student_Name' ? 30 : 14 }));
     ws.getRow(1).eachCell((c) => style(c, { bold: true, color: C.brown, bg: C.totFill }));
-    result.unseated.forEach((s) => ws.addRow({ ...s, Reason: 'No seat available / no building set' }));
+    result.unseated.forEach((s) => ws.addRow({ ...s, Reason: s.Reason || 'No seat available' }));
   }
 
   return wb;
 }
 
 export { phaseOf };
+
+// Notice board: one sheet per building entrance, rooms with roll-number ranges. With several papers,
+// each paper is a section on the same sheet (Operations prints one notice board for the day).
+function noticeBoard(ws, papers, meta) {
+  ws.columns = [{ width: 12 }, { width: 11 }, { width: 11 }, { width: 12 }, { width: 15 }, { width: 15 }, { width: 30 }];
+  const many = papers.length > 1;
+  titleRow(ws, 1, `${many ? meta.dayTitle || 'Test' : papers[0].title} — NOTICE BOARD`, 7, { bold: true, size: 16, color: C.navy, bg: C.titleFill, border: med });
+  titleRow(ws, 2, `Date: ${fmtDateDMY(meta.dateISO)}${many ? '' : `   Time: ${papers[0].shiftLabels.join(' & ')}`}   —   Students check Room No. & Seat No. here`, 7,
+    { bold: true, size: 11, color: C.navy, bg: C.subFill });
+  let r = 4;
+  for (const p of papers) {
+    if (many) { titleRow(ws, r++, `${p.title}  |  ${p.shiftLabels.join(' & ')}`, 7, { bold: true, size: 13, color: C.white, bg: C.navy }); }
+    for (const b of [...new Set(p.rooms.map((x) => x.building))]) {
+      titleRow(ws, r++, b, 7, { bold: true, size: 12, color: C.navy, bg: C.titleFill });
+      ['Building', 'Room No.', 'Strength', 'Allotted', 'Reg. No. From', 'Reg. No. To', 'Batches'].forEach((h, i) => { const c = ws.getCell(r, i + 1); c.value = h; style(c, { bold: true, color: C.green, bg: C.headFill }); });
+      r++;
+      for (const room of p.rooms.filter((x) => x.building === b)) {
+        const occ = p.rows.filter((s) => s.Building === b && String(s['Room No.']) === String(room.room)).sort((x, y) => naturalCompare(x.Roll_Number, y.Roll_Number));
+        const batches = [...new Set(occ.map((s) => s.Batch))].sort().join(', ');
+        [b, roomVal(room.room), room.capacity, occ.length, asNum(occ[0]?.Roll_Number), asNum(occ[occ.length - 1]?.Roll_Number), batches]
+          .forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v ?? null; style(c); });
+        r++;
+      }
+      r++;
+    }
+    r++;
+  }
+}
+
+/** One workbook with a single notice board for every paper of the day. items: [{ result, meta }] */
+export function buildNoticeBoard(ExcelJS, items, dayMeta) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Seating Arrangement Automation';
+  const papers = items.filter((x) => x.result.assigned.length).map(({ result, meta }) => ({
+    title: meta.title,
+    rows: result.assigned,
+    rooms: result.usedRooms,
+    shiftLabels: (meta.slots || []).map((s) => (s.label ? `${s.label}: ` : '') + fmtTime(s.start) + (s.end ? ` to ${fmtTime(s.end)}` : '')),
+  }));
+  noticeBoard(wb.addWorksheet('Notice_Board'), papers, dayMeta);
+  return wb;
+}

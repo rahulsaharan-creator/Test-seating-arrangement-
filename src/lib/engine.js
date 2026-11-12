@@ -1,4 +1,12 @@
 // Core seating allocation logic (pure JS, no UI). Used by the browser app and by tests.
+//
+// How a seating is made (one paper, one call to allocate):
+//  1. Each student is Online (computer lab) or Offline (classroom): a student's own choice wins over the batch's.
+//  2. Special students (Monitoring, Due fee, Top batch) go first into the rooms chosen for their group.
+//  3. Everyone else is shuffled together and fills the chosen buildings in the order Operations set,
+//     one room completely before the next.
+//  4. Girls only sit in buildings and labs marked "Girls allowed". Enough of those seats are kept for them.
+//  5. Inside a room, seat numbers follow roll-number order. CB (the SMD sheet group) comes from the batch groups.
 
 export const phaseOf = (batch) => {
   const c = String(batch || '').trim().charAt(0).toUpperCase();
@@ -29,139 +37,141 @@ export function shuffle(arr, rng) {
   return a;
 }
 
-/**
- * Order in which buildings are tried for students whose class is in `home`.
- * Own building first. Then the "near" buildings in priority order.
- * Far buildings (PC) are used only after every near building is full.
- * Students of a far building overflow to near buildings first.
- */
-export function overflowOrder(home, buildingOrder, farBuildings) {
-  const far = new Set(farBuildings);
-  const near = buildingOrder.filter((b) => !far.has(b) && b !== home);
-  const farOthers = buildingOrder.filter((b) => far.has(b) && b !== home);
-  return [home, ...near, ...farOthers];
-}
+export const roomKey = (r) => `${r.building}|${r.room}`;
+export const isGirl = (s) => /^(f|female|girl)$/i.test(String(s.Gender || '').trim());
+
+// Special groups, highest first. A student in two lists counts in the first one.
+export const FLAGS = ['Monitoring', 'Due fee', 'Top batch'];
 
 /**
  * students: [{Roll_Number, Student_Name, Gender, Course, Batch, Medium}]
  * config: {
- *   rooms: [{building, room, capacity, enabled}],         // offline rooms
- *   labs:  [{building, room, capacity, enabled}],         // online (computer) rooms
- *   batchBuilding: {BATCH: building},                     // home building per batch
- *   batchMode: {BATCH: 'Offline' | 'Online'},
- *   buildingOrder: [...], farBuildings: [...], seed: number
+ *   rooms: [{building, room, capacity, enabled}],   // classrooms (Offline)
+ *   labs:  [{building, room, capacity, enabled, girls}], // computer labs (Online); girls === false means no girls
+ *   buildingOrder: ['GP', 'M1', ...],                 // buildings to use, in fill order; others are not used
+ *   girlsOk: {GP: true, PC: false, ...},              // classrooms: may girls sit in this building? (default yes)
+ *   batchMode: {BATCH: 'Offline' | 'Online'},         // default Offline
+ *   studentMode: {ROLL: 'Offline' | 'Online'},        // overrides the batch
+ *   flags: {ROLL: 'Monitoring' | 'Due fee' | 'Top batch'},
+ *   pins: {'Monitoring': ['GP|1', ...], ...},          // rooms or labs kept for each special group
+ *   cbOf: {BATCH: 'Group name'},                      // SMD sheet group; default first letter + "-Phase"
+ *   taken: {'GP|1': 12},                              // seats already used by an overlapping paper
+ *   seed: number
  * }
  */
 export function allocate(students, config) {
-  const rng = makeRng(config.seed);
+  const rng = makeRng(config.seed || 1);
   const warnings = [];
+  const order = config.buildingOrder || [];
+  const rank = (b) => { const i = order.indexOf(b); return i < 0 ? Infinity : i; };
+  const girlsOk = config.girlsOk || {};
+  const taken = config.taken || {};
 
-  // Seat pools, in fill order. "used" counts seats already given.
-  const pool = (list) =>
-    list
-      .filter((r) => r.enabled && Number(r.capacity) > 0)
-      .map((r) => ({ ...r, capacity: Number(r.capacity), taken: Number((config.taken || {})[`${r.building}|${r.room}`] || 0), used: 0, occupants: [] }))
-      .filter((r) => r.capacity - r.taken > 0); // taken: seats already used by an overlapping slot
-  const rooms = pool(config.rooms);
-  const labs = pool(config.labs);
-  const roomsByBuilding = {};
-  for (const r of rooms) (roomsByBuilding[r.building] ||= []).push(r);
+  // Seat pools in fill order: chosen buildings only, in the chosen order, then room order inside a building.
+  const pool = (list, kind) => list
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => r.enabled && Number(r.capacity) > 0 && rank(r.building) < Infinity)
+    .sort((a, b) => rank(a.r.building) - rank(b.r.building) || a.i - b.i)
+    .map(({ r }) => ({
+      ...r, kind, capacity: Number(r.capacity), taken: Number(taken[roomKey(r)] || 0), used: 0, occupants: [],
+      girls: kind === 'Online' ? r.girls !== false && girlsOk[r.building] !== false : girlsOk[r.building] !== false,
+    }))
+    .filter((r) => r.capacity - r.taken > 0);
+  const rooms = pool(config.rooms || [], 'Offline');
+  const labs = pool(config.labs || [], 'Online');
+  const free = (room) => room.capacity - room.taken - room.used;
+  const seat = (room, s) => { room.occupants.push({ ...s, Mode: room.kind }); room.used++; };
 
-  const fill = (queue, roomList, mode) => {
-    // Fill each room completely before moving on to the next one.
-    const left = [];
-    let i = 0;
-    for (const room of roomList) {
-      while (i < queue.length && room.taken + room.used < room.capacity) {
-        room.occupants.push({ ...queue[i], Mode: mode });
-        room.used++;
-        i++;
+  // 1. Mode and special group of each student
+  const modeOf = (s) => (config.studentMode || {})[s.Roll_Number] || (config.batchMode || {})[s.Batch] || 'Offline';
+  const flagOf = (s) => (config.flags || {})[s.Roll_Number] || '';
+  const list = students.map((s) => ({ ...s, Flag: flagOf(s) }));
+
+  /**
+   * Fill rooms in order, one completely before the next, keeping enough girls-allowed seats for the girls.
+   * Returns the students who did not fit.
+   */
+  const fill = (queue, roomList) => {
+    // Keep the shuffled order: take the next student who may sit in this room.
+    let girlsLeft = queue.filter(isGirl).length;
+    const q = queue.slice();
+    for (let k = 0; k < roomList.length && q.length; k++) {
+      const room = roomList[k];
+      const girlSeatsLater = roomList.slice(k + 1).filter((r) => r.girls).reduce((a, r) => a + free(r), 0);
+      while (free(room) > 0 && q.length) {
+        let idx = 0;
+        if (!room.girls) idx = q.findIndex((s) => !isGirl(s));
+        else if (girlsLeft - girlSeatsLater >= free(room)) idx = q.findIndex(isGirl); // otherwise some girls would have no seat
+        if (idx < 0) break;
+        const [s] = q.splice(idx, 1);
+        seat(room, s);
+        if (isGirl(s)) girlsLeft--;
       }
-      if (i >= queue.length) break;
     }
-    while (i < queue.length) left.push(queue[i++]);
-    return left;
+    return q;
   };
 
-  const online = students.filter((s) => config.batchMode[s.Batch] === 'Online');
-  const offline = students.filter((s) => config.batchMode[s.Batch] !== 'Online');
+  const unseated = [];
+  const noRoomReason = (s, kind) => (isGirl(s) && !(kind === 'Online' ? labs : rooms).some((r) => r.girls)
+    ? `No ${kind === 'Online' ? 'lab' : 'building'} allows girls`
+    : `No ${kind === 'Online' ? 'lab' : 'classroom'} seat left`);
 
-  // ---- Online: labs in the student's own building first, then near buildings, far ones last
-  const labsByBuilding = {};
-  for (const l of labs) (labsByBuilding[l.building] ||= []).push(l);
-  const labOrder = [...config.buildingOrder, ...Object.keys(labsByBuilding).filter((b) => !config.buildingOrder.includes(b))];
-  const onlineByHome = {};
-  for (const s of online) (onlineByHome[config.batchBuilding[s.Batch] || '?'] ||= []).push(s);
-  const onlineOver = {};
-  for (const home of Object.keys(onlineByHome)) {
-    const left = fill(shuffle(onlineByHome[home], rng), labsByBuilding[home] || [], 'Online');
-    if (left.length) onlineOver[home] = left;
-  }
-  const onlineLeft = [];
-  for (const home of Object.keys(onlineOver)) {
-    let queue = onlineOver[home];
-    for (const b of overflowOrder(home, labOrder, config.farBuildings).slice(1)) {
-      if (!queue.length) break;
-      queue = fill(queue, labsByBuilding[b] || [], 'Online');
+  for (const kind of ['Online', 'Offline']) {
+    const roomList = kind === 'Online' ? labs : rooms;
+    let people = list.filter((s) => modeOf(s) === kind);
+    if (!people.length) continue;
+    if (!roomList.length) {
+      warnings.push(`No ${kind === 'Online' ? 'computer lab' : 'classroom'} is switched on in the chosen buildings: ${people.length} ${kind.toLowerCase()} students not seated.`);
+      unseated.push(...people.map((s) => ({ ...s, Mode: kind, Reason: `No ${kind === 'Online' ? 'lab' : 'classroom'} chosen` })));
+      continue;
     }
-    onlineLeft.push(...queue);
-  }
 
-  // ---- Offline: step 1, each building takes its own students first
-  const byHome = {};
-  const noBuilding = [];
-  for (const s of offline) {
-    const b = config.batchBuilding[s.Batch];
-    if (!b) noBuilding.push(s);
-    else (byHome[b] ||= []).push(s);
-  }
-  if (noBuilding.length) {
-    const bs = [...new Set(noBuilding.map((s) => s.Batch))].join(', ');
-    warnings.push(`No building set for batch(es): ${bs} — ${noBuilding.length} students not seated.`);
-  }
-
-  const overflow = {}; // home building -> students who did not fit at home
-  for (const home of Object.keys(byHome)) {
-    const queue = shuffle(byHome[home], rng);
-    const ownRooms = roomsByBuilding[home] || [];
-    if (!ownRooms.length) warnings.push(`Building ${home} has no rooms switched on; its students move to other buildings.`);
-    const left = fill(queue, ownRooms, 'Offline');
-    if (left.length) overflow[home] = left;
-  }
-
-  // ---- Offline: step 2, students who did not fit go to the next building in order
-  const offlineLeft = [];
-  const moved = [];
-  for (const home of Object.keys(overflow)) {
-    let queue = overflow[home];
-    const order = overflowOrder(home, config.buildingOrder, config.farBuildings).slice(1);
-    for (const b of order) {
-      if (!queue.length) break;
-      const before = queue.length;
-      queue = fill(queue, roomsByBuilding[b] || [], 'Offline');
-      if (before > queue.length) moved.push({ from: home, to: b, count: before - queue.length });
+    // 2. Special groups first, into the rooms kept for them
+    for (const flag of FLAGS) {
+      const keys = new Set((config.pins || {})[flag] || []);
+      if (!keys.size) continue;
+      const own = roomList.filter((r) => keys.has(roomKey(r)));
+      if (!own.length) continue;
+      const group = people.filter((s) => s.Flag === flag);
+      if (!group.length) continue;
+      const left = fill(shuffle(group, rng), own);
+      const placed = new Set(group.filter((s) => !left.includes(s)));
+      people = people.filter((s) => !placed.has(s));
+      if (left.length) warnings.push(`${flag}: ${left.length} ${kind.toLowerCase()} students did not fit in the rooms kept for them and were seated with everyone else.`);
     }
-    offlineLeft.push(...queue);
+
+    // 3. Everyone else, shuffled together, in building order. Rooms kept for a group are used last.
+    const pinned = new Set(Object.values(config.pins || {}).flat());
+    const ordered = [...roomList.filter((r) => !pinned.has(roomKey(r))), ...roomList.filter((r) => pinned.has(roomKey(r)))];
+    const left = fill(shuffle(people, rng), ordered);
+    if (left.length) {
+      const g = left.filter(isGirl).length;
+      warnings.push(`${kind === 'Online' ? 'Labs' : 'Classrooms'} are full: ${left.length} ${kind.toLowerCase()} students not seated${g ? ` (${g} girls)` : ''}. Switch on more ${kind === 'Online' ? 'labs' : 'rooms or buildings'}${g ? ', or allow girls in another building' : ''}.`);
+      unseated.push(...left.map((s) => ({ ...s, Mode: kind, Reason: noRoomReason(s, kind) })));
+    }
   }
 
-  // Seat numbers: inside each room, seats follow roll-number order (as in the example sheet)
+  // 5. Seat numbers in roll-number order inside each room
   const assigned = [];
-  for (const room of [...labs, ...rooms]) {
+  const all = [...labs, ...rooms];
+  for (const room of all) {
     room.occupants.sort((a, b) => naturalCompare(a.Roll_Number, b.Roll_Number));
     room.occupants.forEach((s, idx) => {
-      assigned.push({ ...s, Building: room.building, 'Room No.': room.room, 'Seat No.': room.taken + idx + 1, CB: phaseOf(s.Batch) });
+      assigned.push({ ...s, Building: room.building, 'Room No.': room.room, 'Seat No.': room.taken + idx + 1, CB: (config.cbOf || {})[s.Batch] || phaseOf(s.Batch) });
     });
   }
 
-  const unseated = [...onlineLeft, ...offlineLeft, ...noBuilding];
-  if (onlineLeft.length) warnings.push(`Labs are full: ${onlineLeft.length} online students not seated. Increase lab capacity or switch on more labs.`);
-  if (offlineLeft.length) warnings.push(`All rooms are full: ${offlineLeft.length} offline students not seated. Increase capacity or switch on more rooms.`);
+  return { assigned, unseated, warnings, usedRooms: all.filter((r) => r.used > 0) };
+}
 
+// Seats free for one kind in the chosen buildings (girls-allowed seats separately).
+export function capacity(config, kind) {
+  const order = config.buildingOrder || [];
+  const list = (kind === 'Online' ? config.labs : config.rooms) || [];
+  const on = list.filter((r) => r.enabled && order.includes(r.building));
+  const ok = (r) => (kind === 'Online' ? r.girls !== false : true) && (config.girlsOk || {})[r.building] !== false;
   return {
-    assigned,
-    unseated,
-    warnings,
-    moved,
-    usedRooms: [...labs, ...rooms].filter((r) => r.used > 0),
+    seats: on.reduce((a, r) => a + Number(r.capacity || 0), 0),
+    girlSeats: on.filter(ok).reduce((a, r) => a + Number(r.capacity || 0), 0),
   };
 }
