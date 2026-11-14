@@ -102,19 +102,23 @@ export function allocate(students, config) {
    */
   const fill = (queue, roomList) => {
     // Keep the shuffled order: take the next student who may sit in this room.
+    // Boys are kept for the boys-only rooms further on in the same way, so those rooms are not left half empty.
     let girlsLeft = queue.filter(isGirl).length;
+    let boysLeft = queue.length - girlsLeft;
     const q = queue.slice();
     for (let k = 0; k < roomList.length && q.length; k++) {
       const room = roomList[k];
       const girlSeatsLater = roomList.slice(k + 1).filter((r) => r.girls).reduce((a, r) => a + free(r), 0);
+      const boySeatsLater = roomList.slice(k + 1).filter((r) => !r.girls).reduce((a, r) => a + free(r), 0);
       while (free(room) > 0 && q.length) {
         let idx = 0;
         if (!room.girls) idx = q.findIndex((s) => !isGirl(s));
         else if (girlsLeft - girlSeatsLater >= free(room)) idx = q.findIndex(isGirl); // otherwise some girls would have no seat
+        else if (girlsLeft > 0 && boysLeft <= boySeatsLater) idx = q.findIndex(isGirl); // otherwise a boys-only room would stay half empty
         if (idx < 0) break;
         const [s] = q.splice(idx, 1);
         seat(room, s);
-        if (isGirl(s)) girlsLeft--;
+        if (isGirl(s)) girlsLeft--; else boysLeft--;
       }
     }
     return q;

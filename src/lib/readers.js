@@ -14,6 +14,7 @@ const cellText = (v) => {
   if (typeof v === 'object') {
     if (v.richText) return v.richText.map((t) => t.text).join('');
     if ('result' in v) return cellText(v.result);
+    if (v.formula || v.sharedFormula || v.error) return ''; // a formula Excel never calculated, or an error cell
     if (v.text) return String(v.text);
     if (v instanceof Date) return v.toISOString().slice(0, 10);
   }

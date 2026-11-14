@@ -172,9 +172,12 @@ export default function App() {
   const labsOn = settings.labs.filter((l) => l.enabled && Number(l.capacity) > 0);
   const roomsOn = settings.rooms.filter((r) => r.enabled && Number(r.capacity) > 0);
   // Until the operator picks labs and buildings for a time slot, every lab and every building in use counts for the estimate
-  const slotLabs = (s) => (s.labs ? labsOn.filter((l) => s.labs.includes(roomKey(l))) : labsOn);
+  // Rooms and labs kept for monitoring or due fee students are always part of the seating (and of every seat count),
+  // even when their building is not ticked, so the counts match what the seating really uses.
+  const pinKeys = new Set(['Monitoring', 'Due fee'].filter((f) => lists[f].length).flatMap((f) => settings.pins[f] || []));
+  const slotLabs = (s) => (s.labs ? labsOn.filter((l) => s.labs.includes(roomKey(l)) || pinKeys.has(roomKey(l))) : labsOn);
   const slotBuildings = (s) => s.buildings || settings.buildingsOn;
-  const slotRooms = (s) => roomsOn.filter((r) => slotBuildings(s).includes(r.building) && !s.roomsOff.includes(roomKey(r)));
+  const slotRooms = (s) => roomsOn.filter((r) => (slotBuildings(s).includes(r.building) && !s.roomsOff.includes(roomKey(r))) || pinKeys.has(roomKey(r)));
   const sumSeats = (list) => list.reduce((a, r) => a + Number(r.capacity || 0), 0);
   const countSlot = (p, s) => {
     const c = { online: 0, offline: 0 };
@@ -309,18 +312,19 @@ export default function App() {
     for (const s of used) for (const kind of ['labs', 'rooms']) for (const [k, v] of Object.entries(planOf(s).taken[kind])) taken[kind][k] = Math.max(taken[kind][k] || 0, v.filled);
     const free = (r, kind) => Math.max(0, Number(r.capacity) - (taken[kind][roomKey(r)] || 0));
     const rank = (b) => { const i = settings.buildingOrder.indexOf(b); return i < 0 ? 1e9 : i; };
+    // Rooms and labs kept for monitoring or due fee students are used anyway: count them first
     const labs = [];
-    let labSeats = 0;
+    let labSeats = labsOn.filter((l) => pinKeys.has(roomKey(l))).reduce((a, l) => a + free(l, 'labs'), 0);
     for (const l of labsOn.map((r, i) => ({ r, i })).sort((a, b) => rank(a.r.building) - rank(b.r.building) || a.i - b.i).map((x) => x.r)) {
       if (labSeats >= c.online) break;
-      if (free(l, 'labs') > 0) { labs.push(roomKey(l)); labSeats += free(l, 'labs'); }
+      if (free(l, 'labs') > 0 && !pinKeys.has(roomKey(l))) { labs.push(roomKey(l)); labSeats += free(l, 'labs'); }
     }
     const offNeed = c.offline + Math.max(0, c.online - labSeats);
     const buildings = [];
-    let roomSeats = 0;
+    let roomSeats = roomsOn.filter((r) => pinKeys.has(roomKey(r))).reduce((a, r) => a + free(r, 'rooms'), 0);
     for (const b of settings.buildingOrder.filter((x) => settings.buildingsOn.includes(x))) {
       if (roomSeats >= offNeed) break;
-      const seats = roomsOn.filter((r) => r.building === b).reduce((a, r) => a + free(r, 'rooms'), 0);
+      const seats = roomsOn.filter((r) => r.building === b && !pinKeys.has(roomKey(r))).reduce((a, r) => a + free(r, 'rooms'), 0);
       if (seats > 0) { buildings.push(b); roomSeats += seats; }
     }
     return { labs, buildings };
@@ -345,7 +349,6 @@ export default function App() {
   function run(newSeed, list) {
     const cbOf = {};
     for (const g of settings.cbGroups) for (const b of parseRolls(g.batches)) if (g.name.trim()) cbOf[b] = g.name.trim();
-    const pinKeys = new Set(Object.values(settings.pins || {}).flat());
     const units = list.filter((p) => p.done && p.slots.some((s) => s.batches.length))
       .map((p, i) => ({ p, i, unit: { id: p.id, name: (p.name || '').trim() || `Test ${list.indexOf(p) + 1}`, mode: '', two: false, shifts: shiftsOfTest(p) } }))
       .sort((a, b) => mins(windowOf(a.unit).start) - mins(windowOf(b.unit).start));
@@ -373,10 +376,10 @@ export default function App() {
       const roomKeys = new Set(used.flatMap((s) => slotRooms(s).map(roomKey)));
       const studentModeAll = used.some((s) => s.mode === 'Both') ? studentMode : {};
       const cfg = {
-        rooms: settings.rooms.map((r) => ({ ...r, enabled: !!r.enabled && (roomKeys.has(roomKey(r)) || pinKeys.has(roomKey(r))) })),
-        labs: settings.labs.map((l) => ({ ...l, enabled: !!l.enabled && (labKeys.has(roomKey(l)) || pinKeys.has(roomKey(l))) })),
+        rooms: settings.rooms.map((r) => ({ ...r, enabled: !!r.enabled && roomKeys.has(roomKey(r)) })),
+        labs: settings.labs.map((l) => ({ ...l, enabled: !!l.enabled && labKeys.has(roomKey(l)) })),
         buildingOrder: settings.buildingOrder, girlsOk: settings.girlsOk,
-        batchMode, studentMode: studentModeAll, flags, pins: settings.pins, cbOf,
+        batchMode, studentMode: studentModeAll, flags, pins: Object.fromEntries(Object.entries(settings.pins || {}).filter(([f]) => !(f in lists) || lists[f].length)), cbOf,
         seatOrder: settings.seatOrder || 'mixed', apart: !!settings.apart, seed: newSeed + i, taken,
       };
       const result = allocate(st, cfg);
@@ -487,6 +490,7 @@ export default function App() {
             <FileCard title="Admission list" hint="Columns: Roll_Number, Student_Name, Gender, Course, Batch, Medium, Status"
               loaded={adm && <><b>{adm.fileName}</b><span>{pl(adm.students.length, 'active student')} · {pl(batches.length, 'batch')}{adm.inactive ? ` · ${adm.inactive} inactive left out` : ''}{adm.duplicates ? ` · ${adm.duplicates} duplicate rolls skipped` : ''}</span></>}
               onFile={onAdmission} onRemove={removeAdmission} template={() => downloadTemplate('admission')} big />
+            {adm && !adm.students.some((x) => String(x.Gender || '').trim()) && <div className="alert warn"><span>The admission list has no Gender values, so every student counts as a boy: “Girls allowed” rules for buildings and labs cannot work. Add a Gender column (M / F) to use them.</span></div>}
             <details className="fold">
               <summary>Monitoring and due fee students <span className="muted">· optional · {lists.Monitoring.length} monitoring, {lists['Due fee'].length} due fee</span></summary>
               <p className="muted">Upload or paste their roll numbers, then pick the rooms where they sit. They are seated in these rooms first; other students fill the free seats only after every other room is full.</p>

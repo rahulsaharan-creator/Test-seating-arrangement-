@@ -146,5 +146,18 @@ const basic = (res, n) => {
   ok(relativeNeighbours(byFather) > 0 && relativeNeighbours(keepRelativesApart(byFather)) === 0, 'brothers and sisters moved apart');
 }
 
+console.log('\nExact seats: no room left half empty');
+{
+  // 15 seats where girls may sit, then a 5-seat boys-only room; 5 girls and 15 boys = 20 seats for 20 students
+  const st = Array.from({ length: 20 }, (_, i) => ({ Roll_Number: String(500 + i), Batch: i % 2 ? 'A1' : 'B1', Gender: i < 5 ? 'F' : 'M' }));
+  for (let seed = 1; seed <= 30; seed++) {
+    const r = allocate(st, { rooms: [{ building: 'GP', room: '1', capacity: 15, enabled: true }, { building: 'PC', room: '1', capacity: 5, enabled: true }], labs: [], buildingOrder: ['GP', 'PC'], girlsOk: { PC: false }, seed });
+    if (r.unseated.length || r.usedRooms.some((x) => x.used < x.capacity)) { ok(false, `seed ${seed}: boys-only room left half empty`); break; }
+    if (seed === 30) ok(true, 'boys kept for the boys-only room (30 shuffles, every seat filled)');
+  }
+  const r = allocate(st, { rooms: [{ building: 'GP', room: '1', capacity: 12, enabled: true }, { building: 'GP', room: '2', capacity: 8, enabled: true }], labs: [], buildingOrder: ['GP'], seatOrder: 'name', seed: 2 });
+  ok(!r.unseated.length && r.usedRooms.every((x) => x.used === x.capacity), 'seats equal to students: every room full (name order)');
+}
+
 console.log(fails ? `\n${fails} FAILED` : '\nAll checks passed');
 process.exit(fails ? 1 : 0);
