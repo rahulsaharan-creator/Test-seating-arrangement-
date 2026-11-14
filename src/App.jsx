@@ -709,7 +709,7 @@ function PaperStep({ test, setTest, setPaper, setSlot, courses, phases, ownerOf,
         <>
           <div className="papers">
             {test.papers.map((p, i) => (kind === 'RPT' ? (
-              <RptCard key={p.id} p={p} i={i} n={test.papers.length} setPaper={setPaper} remove={() => removePaper(p.id)} courses={courses} phases={phases} sumSlot={sumSlot} ok={paperOk(p)} start={() => start(p)} />
+              <RptCard key={p.id} p={p} i={i} n={test.papers.length} setPaper={setPaper} remove={() => removePaper(p.id)} courses={courses} phases={phases} sumSlot={sumSlot} ok={paperOk(p)} start={() => start(p)} top={top} setTop={setTop} />
             ) : (
               <PaperCard key={p.id} p={p} i={i} n={test.papers.length} setPaper={setPaper} setSlot={setSlot} remove={() => removePaper(p.id)}
                 courses={courses} phases={phases} ownerOf={ownerOf} slotOf={slotOf} phaseBatches={phaseBatches}
@@ -778,12 +778,24 @@ const keepBatches = (s, phases, keys) => {
 const rptTimes = (two) => (two
   ? [{ start: '06:00', end: '09:00', s2: { start: '14:00', end: '17:00' } }, { start: '10:00', end: '13:00', s2: { start: '17:30', end: '20:30' } }]
   : [{ start: '06:00', end: '09:00' }, { start: '10:00', end: '13:00' }, { start: '14:00', end: '17:00' }, { start: '17:30', end: '20:30' }]);
-const rptDefault = () => ({ phases: [], mode: '', two: false, times: rptTimes(false) });
-// Batches stay whole; the biggest batch goes to the time with the fewest students so far, so every time gets about the same number
+const rptDefault = () => ({ phases: [], mode: '', two: false, times: rptTimes(false), noGirlsLast: true });
+// The time that ends last (its last shift ends latest): no girls there when "No girls in the last time" is on
+export const lastTimeOf = (r) => {
+  const endOf = (t) => mins(r.two && t.s2 ? t.s2.end : t.end);
+  return r.times.length > 1 ? r.times.reduce((best, t, i) => (endOf(t) > endOf(r.times[best]) ? i : best), 0) : -1;
+};
+// Batches stay whole; the biggest batch goes to the time with the fewest students so far, so every time gets about the same
+// number. Batches with girls are placed first, never in the last time (when that rule is on).
 export function rptSlots(p, r, phases) {
   const bs = phases.filter((g) => r.phases.includes(g.key)).flatMap((g) => g.batches).slice().sort((a, b) => b.count - a.count || naturalCompare(a.batch, b.batch));
+  const last = r.noGirlsLast === false ? -1 : lastTimeOf(r);
   const load = r.times.map(() => 0), lists = r.times.map(() => []);
-  for (const b of bs) { const i = load.indexOf(Math.min(...load)); lists[i].push(b.batch); load[i] += b.count; }
+  const girls = bs.filter((b) => b.girls > 0), boys = bs.filter((b) => !(b.girls > 0));
+  for (const b of [...girls, ...boys]) {
+    const ok = r.times.map((_, i) => !(b.girls > 0 && i === last));
+    const i = load.reduce((best, x, k) => (ok[k] && (best < 0 || x < load[best]) ? k : best), -1);
+    lists[i].push(b.batch); load[i] += b.count;
+  }
   return r.times.map((t, i) => {
     if (!lists[i].length) return null;
     const id = `${p.id}-t${i}`, old = p.slots.find((x) => x.id === id) || {};
@@ -794,7 +806,7 @@ export function rptSlots(p, r, phases) {
   }).filter(Boolean);
 }
 
-function RptCard({ p, i, n, setPaper, remove, courses, phases, sumSlot, ok, start }) {
+function RptCard({ p, i, n, setPaper, remove, courses, phases, sumSlot, ok, start, top, setTop }) {
   const r = p.rpt || rptDefault();
   const apply = (patch, extra = {}) => { const nr = { ...r, ...patch }; const np = { ...p, ...extra, rpt: nr }; setPaper(p.id, { ...extra, rpt: nr, slots: rptSlots(np, nr, phases) }); };
   const mine = phases.filter((g) => p.courses.includes(g.course));
@@ -810,6 +822,10 @@ function RptCard({ p, i, n, setPaper, remove, courses, phases, sumSlot, ok, star
     const st = hhmm(mins(r.two ? last.s2.end : last.end) + 30), len = mins(last.end) - mins(last.start);
     apply({ times: [...r.times, r.two ? { start: st, end: hhmm(mins(st) + len), s2: { start: hhmm(mins(st) + len + 60), end: hhmm(mins(st) + 2 * len + 60) } } : { start: st, end: hhmm(mins(st) + len) }] });
   };
+  const toggleTop = (b) => setTop((t) => { const x = new Set(t); x.has(b) ? x.delete(b) : x.add(b); return x; });
+  const info = Object.fromEntries(mine.flatMap((g) => g.batches).map((b) => [b.batch, b]));
+  const anyGirls = mine.some((g) => g.batches.some((b) => b.girls > 0));
+  const last = r.noGirlsLast === false ? -1 : lastTimeOf(r);
   const count = (s) => s.batches.reduce((a, b) => a + (mine.flatMap((g) => g.batches).find((x) => x.batch === b)?.count || 0), 0);
   return (
     <div className="card paper">
@@ -852,7 +868,9 @@ function RptCard({ p, i, n, setPaper, remove, courses, phases, sumSlot, ok, star
             <button className={!r.two ? 'on' : ''} onClick={() => apply({ two: false, times: rptTimes(false) })}>1 shift (4 times)</button>
             <button className={r.two ? 'on' : ''} onClick={() => apply({ two: true, times: rptTimes(true) })}>2 shifts (same seat in both)</button>
           </div>
-          <p className="muted small">Every batch of the phases above is placed in one time automatically, keeping the number of students at each time about equal. Change any time below; the batches move with it.</p>
+          <p className="muted small">Every batch of the phases above is placed in one time automatically, keeping the number of students at each time about equal. Change any time below; the batches move with it.{r.mode !== 'Offline' ? ' Tick ★ on a batch to make it a top batch: its students take lab seats first.' : ''}</p>
+          <label className="small"><input type="checkbox" checked={r.noGirlsLast !== false} onChange={(e) => apply({ noGirlsLast: e.target.checked })} /> No girls in the last time (batches with girls go to the earlier times)</label>
+          {r.noGirlsLast !== false && !anyGirls && <p className="small bad">The admission list has no girls marked (no Gender values), so this rule cannot work.</p>}
           {r.times.map((t, k) => {
             const s = p.slots.find((x) => x.id === `${p.id}-t${k}`);
             return (
@@ -861,7 +879,12 @@ function RptCard({ p, i, n, setPaper, remove, courses, phases, sumSlot, ok, star
                 {r.two && <TimeRow label="Shift 2" value={t.s2} onChange={(v) => setTime(k, { s2: v })} />}
                 {s ? (
                   <>
-                    <p className="rpt-batches"><b>{pl(count(s), 'student')}</b> · {pl(s.batches.length, 'batch')}: <span className="muted">{s.batches.join(', ')}</span></p>
+                    <p className="rpt-batches"><b>{pl(count(s), 'student')}</b> · {pl(s.batches.length, 'batch')}{k === last ? ' · no girls' : ''}{(() => { const g = s.batches.reduce((a, b) => a + (info[b]?.girls || 0), 0); return g ? ` · ${pl(g, 'girl')}` : ''; })()}</p>
+                    <div className="chips">
+                      {s.batches.map((b) => (r.mode === 'Offline'
+                        ? <span key={b} className="chip-btn">{b} <small>{info[b]?.count}</small></span>
+                        : <button key={b} type="button" className={`chip-btn ${top.has(b) ? 'on' : ''}`} title={top.has(b) ? 'Top batch: lab seats first' : 'Tick to make it a top batch'} onClick={() => toggleTop(b)}>{top.has(b) ? '★ ' : ''}{b} <small>{info[b]?.count}</small></button>))}
+                    </div>
                     <SeatBoard s={sumSlot(p, s)} mode={r.mode} />
                   </>
                 ) : <p className="muted small">No batches at this time.</p>}
