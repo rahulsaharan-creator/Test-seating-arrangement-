@@ -1,5 +1,5 @@
 // Rule checks for the seating engine with made-up students. Run: node tests/engine.mjs
-import { allocate, capacity, isGirl } from '../src/lib/engine.js';
+import { allocate, capacity, isGirl, sameBatchNeighbours } from '../src/lib/engine.js';
 
 let fails = 0;
 const ok = (c, m) => { console.log(`${c ? 'ok  ' : 'FAIL'} - ${m}`); if (!c) fails++; };
@@ -100,6 +100,34 @@ const basic = (res, n) => {
   console.log(`\n6. 3,000 students in ${Date.now() - t} ms`);
   basic(res, 3000);
   ok(!res.assigned.some((s) => s.Building === 'PC' && isGirl(s)), 'no girl in PC');
+}
+
+// 7. Online first: labs fill first, top batch before others; the rest of the online students sit offline
+{
+  const st = [...mk(30, 'XA1', 0), ...mk(30, 'XB1', 0, 101), ...mk(20, 'XC1', 0, 201)];
+  const labs = [{ ...room('GP', 'LAB', 40), girls: true }];
+  const rooms = [room('GP', 1, 60)];
+  const flags = Object.fromEntries(mk(30, 'XB1', 0, 101).map((s) => [s.Roll_Number, 'Top batch']));
+  const res = allocate(st, { rooms, labs, buildingOrder: ['GP'], batchMode: { XA1: 'Online', XB1: 'Online', XC1: 'Offline' }, flags, seed: 5 });
+  console.log('\n7. Online first');
+  basic(res, 80);
+  const on = res.assigned.filter((s) => s.Mode === 'Online');
+  ok(on.length === 40, 'labs filled (40 online)');
+  ok(on.filter((s) => s.Batch === 'XB1').length === 30, 'every top batch student online');
+  ok(res.movedOffline === 20 && res.unseated.length === 0, '20 online students moved offline, none unseated');
+  ok(res.assigned.filter((s) => s.Batch === 'XA1' && s.Mode === 'Online').length === 10, 'XA1 split: 10 online, the rest offline');
+}
+
+// 8. Mixed seat order: no two students of the same batch side by side when batches allow it
+{
+  const st = [...mk(20, 'XA1'), ...mk(20, 'XB1', 3, 101), ...mk(20, 'XC1', 3, 201)];
+  const rooms = [room('GP', 1, 30), room('GP', 2, 30)];
+  const mixed = allocate(st, { rooms, labs: [], buildingOrder: ['GP'], seed: 3 });
+  const roll = allocate(st, { rooms, labs: [], buildingOrder: ['GP'], seed: 3, seatOrder: 'roll' });
+  console.log('\n8. Seat order');
+  basic(mixed, 60);
+  ok(sameBatchNeighbours(mixed.assigned) === 0, 'mixed: no same-batch neighbours');
+  ok(sameBatchNeighbours(roll.assigned) > 0, 'roll order: same-batch neighbours exist (old behaviour kept as an option)');
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nAll checks passed');

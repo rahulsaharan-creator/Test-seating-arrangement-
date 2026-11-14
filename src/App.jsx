@@ -32,7 +32,7 @@ function loadLast() {
   try { return JSON.parse(localStorage.getItem(LAST)) || null; } catch { return null; }
 }
 const uid = () => Math.random().toString(36).slice(2, 8);
-const newPaper = (start = '07:00', end = '10:00') => ({ id: uid(), name: '', two: false, s1: { start, end }, s2: { start: hhmm(mins(end) + 30), end: hhmm(mins(end) + 30 + (mins(end) - mins(start))) } });
+const newPaper = (start = '09:00', end = '12:00') => ({ id: uid(), name: '', two: false, s1: { start, end }, online: { start, end }, s2: { start: hhmm(mins(end) + 30), end: hhmm(mins(end) + 30 + (mins(end) - mins(start))) } });
 function initialTest() {
   const last = loadLast();
   if (last && Array.isArray(last.papers) && last.papers.length) return { title: last.title || '', date: '', papers: last.papers };
@@ -44,7 +44,12 @@ const mins = (t) => { const [h, m] = String(t || '0:0').split(':').map(Number); 
 const hhmm = (m) => `${String(Math.floor(Math.min(m, 1439) / 60)).padStart(2, '0')}:${String(Math.min(m, 1439) % 60).padStart(2, '0')}`;
 // A paper's shifts. Two shifts: the same students and the same seats, an attendance sheet for each shift.
 const shiftsOf = (p) => (p.two ? [{ label: 'Shift 1', ...p.s1 }, { label: 'Shift 2', ...p.s2 }] : [{ label: '', ...p.s1 }]);
-const windowOf = (p) => { const sh = shiftsOf(p); return { start: sh[0].start, end: sh[sh.length - 1].end }; };
+// Online time of a paper: online students may sit at a different time from offline students (default: same as Shift 1)
+const onlineOf = (p) => (p.online && p.online.start ? p.online : p.s1);
+const windowOf = (p) => {
+  const sh = shiftsOf(p), on = onlineOf(p);
+  return { start: hhmm(Math.min(mins(sh[0].start), mins(on.start))), end: hhmm(Math.max(mins(sh[sh.length - 1].end), mins(on.end))) };
+};
 export const overlaps = (a, b) => {
   if (a.id === b.id) return true;
   const x = windowOf(a), y = windowOf(b);
@@ -52,7 +57,7 @@ export const overlaps = (a, b) => {
 };
 const paperName = (p, i) => p.name || `Paper ${i + 1}`;
 const range = (s) => `${fmtTime(s.start)}${s.end ? ` to ${fmtTime(s.end)}` : ''}`;
-const paperTime = (p) => shiftsOf(p).map((s) => (s.label ? `${s.label} ${range(s)}` : range(s))).join(' · ');
+const paperTime = (p) => `Offline ${shiftsOf(p).map((s) => (s.label ? `${s.label} ${range(s)}` : range(s))).join(' · ')} · Online ${range(onlineOf(p))}`;
 const shiftOk = (s) => s.start && s.end && mins(s.end) > mins(s.start);
 
 const Ico = {
@@ -173,10 +178,15 @@ export default function App() {
   const base = { rooms: settings.rooms, labs: settings.labs, buildingOrder: useOrder, girlsOk: settings.girlsOk };
   const capOff = capacity(base, 'Offline'), capOn = capacity(base, 'Online');
   const have = { offline: capOff.seats, online: capOn.seats, girlsOffline: capOff.girlSeats, girlsOnline: capOn.girlSeats };
-  const seatsShort = Math.max(0, need.offline - have.offline) + Math.max(0, need.online - have.online);
-  const girlsShort = Math.max(0, need.girlsOffline - have.girlsOffline) + Math.max(0, need.girlsOnline - have.girlsOnline);
+  // Online first: online students beyond the lab seats are seated offline
+  const overflow = Math.max(0, need.online - have.online);
+  const girlsOverflow = Math.max(0, need.girlsOnline - have.girlsOnline);
+  need.online -= overflow; need.offline += overflow; need.girlsOnline -= girlsOverflow; need.girlsOffline += girlsOverflow;
+  need.overflow = overflow;
+  const seatsShort = Math.max(0, need.offline - have.offline);
+  const girlsShort = Math.max(0, need.girlsOffline - have.girlsOffline);
   const appearing = chosen.reduce((a, b) => a + b.count, 0);
-  const papersOk = papers.length > 0 && papers.every((p) => shiftOk(p.s1) && (!p.two || (shiftOk(p.s2) && mins(p.s2.start) >= mins(p.s1.end))));
+  const papersOk = papers.length > 0 && papers.every((p) => shiftOk(p.s1) && shiftOk(onlineOf(p)) && (!p.two || (shiftOk(p.s2) && mins(p.s2.start) >= mins(p.s1.end))));
   const emptyPapers = multi ? perPaper.filter((x) => !x.list.length) : [];
 
   const ready = {
@@ -247,7 +257,7 @@ export default function App() {
   function run(newSeed = seed) {
     const cbOf = {};
     for (const g of settings.cbGroups) for (const b of parseRolls(g.batches)) if (g.name.trim()) cbOf[b] = g.name.trim();
-    const cfg = { ...base, batchMode: Object.fromEntries(chosen.map((b) => [b.batch, mode[b.batch] || 'Offline'])), studentMode, flags, pins: settings.pins, cbOf };
+    const cfg = { ...base, batchMode: Object.fromEntries(chosen.map((b) => [b.batch, mode[b.batch] || 'Offline'])), studentMode, flags, pins: settings.pins, cbOf, seatOrder: settings.seatOrder || 'mixed' };
     const order = papers.map((p, i) => ({ p, i })).sort((a, b) => mins(windowOf(a.p).start) - mins(windowOf(b.p).start) || a.i - b.i);
     const done = [];
     for (const { p, i } of order) {
@@ -276,7 +286,7 @@ export default function App() {
       shifts: sh.map((s) => s.start),
       slots: sh,
       batchesLabel: [...new Set(x.batches.map((b) => b.batch.slice(0, 2)))].sort().join(', '),
-      modeLabel: n.online && n.offline ? 'Offline + Online Test' : n.online ? 'Online Test' : 'Offline Test',
+      modeLabel: n.online && n.offline ? `Offline + Online Test (Online ${range(onlineOf(x.paper))})` : n.online ? `Online Test (${range(onlineOf(x.paper))})` : 'Offline Test',
     };
   };
 
@@ -329,18 +339,9 @@ export default function App() {
             })}
           </nav>
         </div>
+        {adm && step !== 'students' && <SummaryBar adm={adm} chosen={chosen} appearing={appearing} papers={papers} useOrder={useOrder}
+          need={need} have={have} seatsShort={seatsShort} girlsShort={girlsShort} results={step === 'result' ? results : null} />}
       </header>
-
-      {adm && step !== 'students' && (
-        <div className="sumbar" role="status">
-          <span><b>{adm.students.length.toLocaleString('en-IN')}</b> active students</span>
-          <span><b>{chosen.length}</b> {chosen.length === 1 ? 'batch' : 'batches'} ticked</span>
-          <span><b>{appearing.toLocaleString('en-IN')}</b> appearing</span>
-          <span><b>{papers.length}</b> {papers.length === 1 ? 'paper' : 'papers'}</span>
-          <span><b>{useOrder.length}</b> {useOrder.length === 1 ? 'building' : 'buildings'}</span>
-          <span className={seatsShort || girlsShort ? 'bad' : chosen.length ? 'good' : ''}><b>{(have.offline + have.online).toLocaleString('en-IN')}</b> seats{seatsShort ? ` · ${seatsShort} short` : girlsShort ? ` · ${girlsShort} girls short` : chosen.length ? ' · enough' : ''}</span>
-        </div>
-      )}
 
       <main className="main">
         {error && <div className="alert bad" role="alert"><span>{error}</span><button className="link" onClick={() => setError('')}>Dismiss</button></div>}
@@ -391,6 +392,37 @@ export default function App() {
   );
 }
 
+// Always-visible summary under the steps: what is planned before Create, what was seated after.
+function SummaryBar({ adm, chosen, appearing, papers, useOrder, need, have, seatsShort, girlsShort, results }) {
+  const n = (v) => Number(v || 0).toLocaleString('en-IN');
+  const tail = <span><b>{papers.length}</b> {papers.length === 1 ? 'paper' : 'papers'} · <b>{useOrder.length}</b> {useOrder.length === 1 ? 'building' : 'buildings'}</span>;
+  if (results) {
+    const all = results.flatMap((x) => x.result.assigned);
+    const on = all.filter((s) => s.Mode === 'Online').length;
+    const moved = results.reduce((a, x) => a + (x.result.movedOffline || 0), 0);
+    const notSeated = results.reduce((a, x) => a + x.result.unseated.length, 0);
+    return (
+      <div className="sumbar" role="status">
+        <span><b>{n(appearing)}</b> appearing</span>
+        <span className="good">Online <b>{n(on)}</b></span>
+        <span>Offline <b>{n(all.length - on)}</b>{moved ? ` (${n(moved)} moved from online, labs full)` : ''}</span>
+        <span className={notSeated ? 'bad' : 'good'}><b>{n(notSeated)}</b> not seated</span>
+        {tail}
+      </div>
+    );
+  }
+  return (
+    <div className="sumbar" role="status">
+      <span><b>{n(adm.students.length)}</b> active students</span>
+      <span><b>{chosen.length}</b> {chosen.length === 1 ? 'batch' : 'batches'} · <b>{n(appearing)}</b> appearing</span>
+      <span className={need.online ? 'good' : ''}>Online <b>{n(need.online)}</b> / {n(have.online)} lab seats</span>
+      <span className={seatsShort ? 'bad' : ''}>Offline <b>{n(need.offline)}</b> / {n(have.offline)} classroom seats{need.overflow ? ` (${n(need.overflow)} from online, labs full)` : ''}</span>
+      <span className={seatsShort || girlsShort ? 'bad' : chosen.length ? 'good' : ''}>{seatsShort ? <><b>{n(seatsShort)}</b> seats short</> : girlsShort ? <><b>{n(girlsShort)}</b> girls' seats short</> : chosen.length ? <b>Enough seats</b> : 'No batches yet'}</span>
+      {tail}
+    </div>
+  );
+}
+
 function Head({ kicker, title, lead }) {
   return (
     <div className="head">
@@ -407,8 +439,8 @@ function Guide() {
       <div><span className="kicker">First time here?</span><h2>Seating sheet in four steps</h2></div>
       <ol>
         <li><i>1</i><b>Admission list</b><span>Upload the latest admission list.</span></li>
-        <li><i>2</i><b>Date and papers</b><span>Add each paper, in one shift or two.</span></li>
-        <li><i>3</i><b>Batches</b><span>Tick each paper's batches, Online or Offline.</span></li>
+        <li><i>2</i><b>Date and papers</b><span>Add each paper with its offline and online time.</span></li>
+        <li><i>3</i><b>Batches</b><span>Tick each paper's batches. Online batches fill the labs first; the rest sit offline.</span></li>
         <li><i>4</i><b>Buildings</b><span>Choose the buildings and their order, then Create seating.</span></li>
       </ol>
     </div>
@@ -466,7 +498,7 @@ function PaperStep({ test, setTest, papersOk, back, next, nextOk }) {
   const hint = !test.date ? 'Pick the test date to continue.' : !papersOk ? 'Each shift needs a start and an end time; Shift 2 starts after Shift 1 ends.' : '';
   return (
     <section>
-      <Head kicker="Step 2 of 4" title="When is the test?" lead="Pick the date and add each paper. A paper is in one shift, or in two shifts with the same seating." />
+      <Head kicker="Step 2 of 4" title="When is the test?" lead="Pick the date and add each paper. Set the offline time (classrooms) and the online time (computer labs). Offline can be one shift, or two shifts with the same seating." />
       <div className="card form">
         <label className="field">
           <span>Test date</span>
@@ -491,7 +523,7 @@ function PaperStep({ test, setTest, papersOk, back, next, nextOk }) {
               </div>
               <button type="button" className="iconbtn danger" disabled={test.papers.length === 1} onClick={() => removePaper(p.id)} aria-label={`Remove paper ${i + 1}`} title="Remove this paper">{Ico.bin}</button>
             </div>
-            {(p.two ? [['s1', 'Shift 1'], ['s2', 'Shift 2']] : [['s1', 'Time']]).map(([k, label]) => {
+            {(p.two ? [['s1', 'Offline shift 1'], ['s2', 'Offline shift 2']] : [['s1', 'Offline time']]).map(([k, label]) => {
               const s = p[k];
               const bad = !shiftOk(s) || (k === 's2' && mins(s.start) < mins(p.s1.end));
               return (
@@ -503,6 +535,23 @@ function PaperStep({ test, setTest, papersOk, back, next, nextOk }) {
                 </div>
               );
             })}
+            {(() => {
+              const on = onlineOf(p);
+              const bad = !shiftOk(on);
+              const setOn = (key, v) => {
+                const o = { ...on };
+                if (key === 'start') { const len = o.end && o.start ? mins(o.end) - mins(o.start) : 180; o.start = v; o.end = v ? hhmm(mins(v) + (len > 0 ? len : 180)) : o.end; } else o.end = v;
+                setPaper(p.id, { online: o });
+              };
+              return (
+                <div className={`slot online ${bad ? 'bad' : ''}`}>
+                  <b className="shift-l">Online time</b>
+                  <label className="field"><span>Starts</span><input type="time" value={on.start} onChange={(e) => setOn('start', e.target.value)} /></label>
+                  <label className="field"><span>Ends</span><input type="time" value={on.end} onChange={(e) => setOn('end', e.target.value)} /></label>
+                  <span className="slot-time muted">{!bad ? `${range(on)} · computer labs` : 'Set the end time'}</span>
+                </div>
+              );
+            })()}
             {p.two && <p className="muted small">Both shifts use the same seating: every student keeps the Shift 1 seat. The Excel file has an attendance sheet for each shift.</p>}
           </div>
         ))}
@@ -548,7 +597,7 @@ function BatchStep({ batches, studentsByBatch, selected, setSelected, mode, setM
   return (
     <section>
       <Head kicker="Step 3 of 4" title={multi ? 'Which batches sit each paper?' : 'Which batches are appearing?'}
-        lead={`${multi ? 'Pick a paper, then tick its batches. A batch can be in one paper only. ' : ''}Offline sits in classrooms, Online in computer labs. Set it for a whole course, a batch, or single students.`} />
+        lead={`${multi ? 'Pick a paper, then tick its batches. A batch can be in one paper only. ' : ''}Online batches fill the computer labs first, top batches before others. When the labs are full, the remaining students sit offline in classrooms. Set it for a whole course, a batch, or single students.`} />
       {multi && (
         <div className="slottabs" role="tablist">
           {perPaper.map((x, i) => (
@@ -767,6 +816,15 @@ function RoomStep({ settings, setSettings, need, have, chosen, appearing, lists,
         </div>
         <button className="btn ghost danger" onClick={() => { if (confirm('Reset buildings, rooms, capacities, girls settings and groups to the built-in lists?')) setSettings(freshSettings()); }}>{Ico.bin}Reset to built-in lists</button>
       </details>
+
+      <div className="card seatorder">
+        <h2>Seat order inside each room</h2>
+        <div className="seg" role="group" aria-label="Seat order inside each room">
+          <button className={(settings.seatOrder || 'mixed') === 'mixed' ? 'on' : ''} onClick={() => setSettings((s) => ({ ...s, seatOrder: 'mixed' }))}>Mixed batches</button>
+          <button className={settings.seatOrder === 'roll' ? 'on' : ''} onClick={() => setSettings((s) => ({ ...s, seatOrder: 'roll' }))}>Roll number order</button>
+        </div>
+        <p className="muted small">{(settings.seatOrder || 'mixed') === 'mixed' ? 'Students of the same batch do not sit side by side, so copying is harder. Reshuffle on the result page gives a new mix.' : 'Seats follow roll numbers, so students of one batch sit together.'}</p>
+      </div>
 
       <div className="ctabar">
         <div><b>{!useOrder.length ? 'Tick at least one building' : short ? 'Some students will have no seat' : 'Ready to create the seating'}</b><span className="muted">{appearing} students in {chosen.length} batches · {useOrder.join(' → ') || 'no buildings'}</span></div>

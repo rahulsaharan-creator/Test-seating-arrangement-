@@ -2,11 +2,15 @@
 //
 // How a seating is made (one paper, one call to allocate):
 //  1. Each student is Online (computer lab) or Offline (classroom): a student's own choice wins over the batch's.
+//     Online means "online first": labs fill first (top batches before others); when the labs are full,
+//     the remaining online students are seated offline, one by one, not the whole batch.
 //  2. Special students (Monitoring, Due fee, Top batch) go first into the rooms chosen for their group.
 //  3. Everyone else is shuffled together and fills the chosen buildings in the order Operations set,
 //     one room completely before the next.
 //  4. Girls only sit in buildings and labs marked "Girls allowed". Enough of those seats are kept for them.
-//  5. Inside a room, seat numbers follow roll-number order. CB (the SMD sheet group) comes from the batch groups.
+//  5. Inside a room, seats are mixed so that two students of the same batch do not sit side by side
+//     (seatOrder 'mixed', the default), or follow roll-number order (seatOrder 'roll').
+//     CB (the SMD sheet group) comes from the batch groups.
 
 export const phaseOf = (batch) => {
   const c = String(batch || '').trim().charAt(0).toUpperCase();
@@ -56,6 +60,7 @@ export const FLAGS = ['Monitoring', 'Due fee', 'Top batch'];
  *   pins: {'Monitoring': ['GP|1', ...], ...},          // rooms or labs kept for each special group
  *   cbOf: {BATCH: 'Group name'},                      // SMD sheet group; default first letter + "-Phase"
  *   taken: {'GP|1': 12},                              // seats already used by an overlapping paper
+ *   seatOrder: 'mixed' | 'roll',                     // seat order inside a room (default 'mixed')
  *   seed: number
  * }
  */
@@ -116,10 +121,17 @@ export function allocate(students, config) {
     ? `No ${kind === 'Online' ? 'lab' : 'building'} allows girls`
     : `No ${kind === 'Online' ? 'lab' : 'classroom'} seat left`);
 
+  let movedOffline = [];
   for (const kind of ['Online', 'Offline']) {
     const roomList = kind === 'Online' ? labs : rooms;
     let people = list.filter((s) => modeOf(s) === kind);
+    if (kind === 'Offline') people = people.concat(movedOffline);
     if (!people.length) continue;
+    if (!roomList.length && kind === 'Online') {
+      movedOffline = people.map((s) => ({ ...s, Moved: 'Labs full' }));
+      warnings.push(`No computer lab is switched on in the chosen buildings: ${people.length} online students are seated offline.`);
+      continue;
+    }
     if (!roomList.length) {
       warnings.push(`No ${kind === 'Online' ? 'computer lab' : 'classroom'} is switched on in the chosen buildings: ${people.length} ${kind.toLowerCase()} students not seated.`);
       unseated.push(...people.map((s) => ({ ...s, Mode: kind, Reason: `No ${kind === 'Online' ? 'lab' : 'classroom'} chosen` })));
@@ -146,25 +158,62 @@ export function allocate(students, config) {
     const ordered = roomList.map((r, i) => ({ r, i }))
       .sort((a, b) => rank(a.r.building) - rank(b.r.building) || pinned.has(roomKey(a.r)) - pinned.has(roomKey(b.r)) || a.i - b.i)
       .map(({ r }) => r);
-    const left = fill(shuffle(people, rng), ordered);
-    if (left.length) {
+    // Online first: top batch students take lab seats before everyone else.
+    const queue = kind === 'Online'
+      ? [...shuffle(people.filter((s) => s.Flag === 'Top batch'), rng), ...shuffle(people.filter((s) => s.Flag !== 'Top batch'), rng)]
+      : shuffle(people, rng);
+    const left = fill(queue, ordered);
+    if (left.length && kind === 'Online') {
+      movedOffline = left.map((s) => ({ ...s, Moved: 'Labs full' }));
+      warnings.push(`Labs are full: ${left.length} online students are seated offline.`);
+    } else if (left.length) {
       const g = left.filter(isGirl).length;
       warnings.push(`${kind === 'Online' ? 'Labs' : 'Classrooms'} are full: ${left.length} ${kind.toLowerCase()} students not seated${g ? ` (${g} girls)` : ''}. Switch on more ${kind === 'Online' ? 'labs' : 'rooms or buildings'}${g ? ', or allow girls in another building' : ''}.`);
       unseated.push(...left.map((s) => ({ ...s, Mode: kind, Reason: noRoomReason(s, kind) })));
     }
   }
 
-  // 5. Seat numbers in roll-number order inside each room
+  // 5. Seat numbers inside each room: batches mixed (default) or roll-number order
   const assigned = [];
   const all = [...labs, ...rooms];
   for (const room of all) {
     room.occupants.sort((a, b) => naturalCompare(a.Roll_Number, b.Roll_Number));
+    if (config.seatOrder !== 'roll') room.occupants = mixBatches(room.occupants);
     room.occupants.forEach((s, idx) => {
       assigned.push({ ...s, Building: room.building, 'Room No.': room.room, 'Seat No.': room.taken + idx + 1, CB: (config.cbOf || {})[s.Batch] || phaseOf(s.Batch) });
     });
   }
 
-  return { assigned, unseated, warnings, usedRooms: all.filter((r) => r.used > 0) };
+  return { assigned, unseated, warnings, movedOffline: movedOffline.length, usedRooms: all.filter((r) => r.used > 0) };
+}
+
+// Seat order that keeps two students of the same batch apart: take one student from each batch in turn,
+// always from the batch with the most students left (and never the batch of the seat just filled, if another is left).
+export function mixBatches(list) {
+  const groups = {};
+  for (const s of list) (groups[s.Batch] ||= []).push(s);
+  const out = [];
+  let prev = null;
+  while (out.length < list.length) {
+    const keys = Object.keys(groups).filter((k) => groups[k].length);
+    keys.sort((a, b) => groups[b].length - groups[a].length || naturalCompare(a, b));
+    const k = keys.find((x) => x !== prev) ?? keys[0];
+    out.push(groups[k].shift());
+    prev = k;
+  }
+  return out;
+}
+
+// Same-batch neighbours (seat n and seat n+1) inside the rooms of a result. Used by tests and the summary.
+export function sameBatchNeighbours(assigned) {
+  const byRoom = {};
+  for (const s of assigned) (byRoom[`${s.Building}|${s['Room No.']}`] ||= []).push(s);
+  let n = 0;
+  for (const list of Object.values(byRoom)) {
+    list.sort((a, b) => a['Seat No.'] - b['Seat No.']);
+    for (let i = 1; i < list.length; i++) if (list[i].Batch === list[i - 1].Batch && list[i]['Seat No.'] === list[i - 1]['Seat No.'] + 1) n++;
+  }
+  return n;
 }
 
 // Seats free for one kind in the chosen buildings (girls-allowed seats separately).

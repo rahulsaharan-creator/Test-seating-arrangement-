@@ -294,3 +294,9 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -.01em; margin: 28px 0 8
 .group-row .grow { flex: 1; }
 .order li.off { opacity: .55; }
 @media (max-width: 640px) { .srow { grid-template-columns: 90px 1fr; } .course-mode { margin: 0; width: 100%; } }
+
+/* Summary bar lives inside the sticky header, so it stays visible while scrolling */
+.top .sumbar { margin: 0 auto 10px; box-shadow: none; }
+.slot.online .shift-l { color: var(--accent); }
+.seatorder { margin-top: 18px; }
+.seatorder .seg { margin: 8px 0 6px; }
