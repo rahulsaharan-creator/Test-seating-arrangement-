@@ -40,47 +40,59 @@ function titleRow(ws, row, text, cols, opts) {
   for (let i = 2; i <= cols; i++) style(ws.getCell(row, i), opts);
 }
 
-/**
- * meta: { title, dateISO, shifts: ['07:00', '10:00'?], batchesLabel, modeLabel }
- */
+const labelsOf = (meta) => (meta.slots && meta.slots.length
+  ? meta.slots.map((s) => (s.label ? `${s.label}: ` : '') + fmtTime(s.start) + (s.end ? ` to ${fmtTime(s.end)}` : ''))
+  : (meta.shifts || []).map(fmtTime));
+const inRoom = (rows, room) => rows.filter((s) => s.Building === room.building && String(s['Room No.']) === String(room.room));
+
+/** One paper's workbook. meta: { title, dateISO, slots: [{ label, start, end }], batchesLabel, modeLabel } */
 export function buildWorkbook(ExcelJS, result, meta) {
+  return buildWorkbookAll(ExcelJS, [{ result, meta }], { dateISO: meta.dateISO, dayTitle: meta.title });
+}
+
+/**
+ * One workbook for every paper of the day. items: [{ result, meta }] (meta.paper = paper name); day: { dateISO, dayTitle }.
+ * With several papers each sheet has a Paper column or one block per paper.
+ */
+export function buildWorkbookAll(ExcelJS, items, day) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Seating Arrangement Automation';
-  const rows = result.assigned.slice().sort((a, b) => naturalCompare(a.Roll_Number, b.Roll_Number));
-  const phases = [...new Set(rows.map((r) => r.CB))].sort();
-  const rooms = result.usedRooms;
-  const dateVal = (() => { const { y, m, d } = parseDate(meta.dateISO); return new Date(Date.UTC(y, m - 1, d)); })();
-  const shiftLabels = meta.slots && meta.slots.length
-    ? meta.slots.map((s) => (s.label ? `${s.label}: ` : '') + fmtTime(s.start) + (s.end ? ` to ${fmtTime(s.end)}` : ''))
-    : meta.shifts.map(fmtTime);
-  const shiftCols = shiftLabels.map((_, i) => `Shift ${i + 1}`);
-  if (shiftCols.length < 2) shiftCols.push('Shift 2');
+  const many = items.length > 1;
+  const P = items.map(({ result, meta }) => ({
+    meta, result, name: meta.paper || meta.title,
+    rows: result.assigned.slice().sort((a, b) => naturalCompare(a.Roll_Number, b.Roll_Number)),
+    rooms: result.usedRooms, shiftLabels: labelsOf(meta),
+  }));
+  const dateISO = day.dateISO || items[0]?.meta.dateISO;
+  const dateVal = (() => { const { y, m, d } = parseDate(dateISO); return new Date(Date.UTC(y, m - 1, d)); })();
+  const shiftCols = Array.from({ length: Math.max(2, ...P.map((p) => p.shiftLabels.length)) }, (_, i) => `Shift ${i + 1}`);
+  const paperCol = many ? ['Paper'] : [];
+  const head = (ws, row, labels, opts = { bold: true, size: 11, color: C.green, bg: C.headFill, border: med }) => labels.forEach((h, i) => { const c = ws.getCell(row, i + 1); c.value = h; style(c, opts); });
 
   // ---------- Raw_Data
   {
     const ws = wb.addWorksheet('Raw_Data');
-    ws.columns = [{ width: 12 }, { width: 12 }, { width: 18 }, { width: 18 }];
-    ['Building', 'Room No.', 'Seating Capacity', 'Students Allotted'].forEach((h, i) => {
-      const c = ws.getCell(1, i + 1);
-      c.value = h;
-      style(c, { bold: true, size: 11, color: C.green, bg: C.headFill, border: med });
-    });
-    rooms.forEach((r, i) => {
-      [r.building, roomVal(r.room), r.capacity, r.used].forEach((v, j) => { const c = ws.getCell(i + 2, j + 1); c.value = v; style(c); });
-    });
+    ws.columns = [...paperCol.map(() => ({ width: 24 })), { width: 12 }, { width: 12 }, { width: 18 }, { width: 18 }];
+    head(ws, 1, [...paperCol, 'Building', 'Room No.', 'Seating Capacity', 'Students Allotted']);
+    let r = 2;
+    for (const p of P) for (const room of p.rooms) {
+      [...(many ? [p.name] : []), room.building, roomVal(room.room), room.capacity, room.used].forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v; style(c); });
+      r++;
+    }
     ws.views = [{ state: 'frozen', ySplit: 1 }];
   }
 
-  // ---------- Student_list
+  // ---------- Student_list (the main sheet: every student of every paper)
   {
     const ws = wb.addWorksheet('Student_list');
-    const heads = ['Roll_Number','Student_Name','Gender','Course','Batch','Medium','Date',...shiftCols,'Building','Room No.','Seat No.','CB','Mode','Flag'];
-    ws.columns = heads.map((h) => ({ header: h, key: h, width: h === 'Student_Name' ? 30 : 12 }));
+    const heads = ['Roll_Number', 'Student_Name', 'Gender', 'Course', 'Batch', 'Medium', 'Date', ...paperCol, ...shiftCols, 'Building', 'Room No.', 'Seat No.', 'CB', 'Mode', 'Flag'];
+    ws.columns = heads.map((h) => ({ header: h, key: h, width: h === 'Student_Name' ? 30 : h === 'Paper' ? 24 : 12 }));
     ws.getRow(1).eachCell((c) => style(c, { bold: true, size: 11, color: C.green, bg: C.headFill }));
-    for (const r of rows) {
+    const all = P.flatMap((p) => p.rows.map((r) => ({ r, p }))).sort((a, b) => naturalCompare(a.r.Roll_Number, b.r.Roll_Number));
+    for (const { r, p } of all) {
       ws.addRow({
-        ...r, Roll_Number: asNum(r.Roll_Number), Date: dateVal,
-        ...Object.fromEntries(shiftCols.map((c, i) => [c, shiftLabels[i] || ''])), 'Room No.': roomVal(r['Room No.']),
+        ...r, Roll_Number: asNum(r.Roll_Number), Date: dateVal, Paper: p.name,
+        ...Object.fromEntries(shiftCols.map((c, i) => [c, p.shiftLabels[i] || ''])), 'Room No.': roomVal(r['Room No.']),
       });
     }
     ws.getColumn('Date').numFmt = 'dd-mm-yyyy';
@@ -88,100 +100,106 @@ export function buildWorkbook(ExcelJS, result, meta) {
     ws.views = [{ state: 'frozen', ySplit: 1 }];
   }
 
-  // ---------- Seating Arrangement (two side-by-side columns, sorted by roll number)
+  // ---------- Seating Arrangement (two side-by-side columns, sorted by roll number; one block per paper)
   {
     const ws = wb.addWorksheet('Seating Arrangement');
     ws.columns = [12.7, 10.8, 10.6, 9.1, 4, 12.7, 10.8, 10.6, 9.1].map((w) => ({ width: w }));
-    titleRow(ws, 1, meta.title, 9, { bold: true, size: 22, color: C.navy, bg: C.titleFill, border: med });
-    titleRow(ws, 2, `Mode: ${meta.modeLabel}`, 9, { bold: true, size: 13, color: C.navy, bg: C.subFill, border: med });
-    titleRow(ws, 3, `Batch: ${meta.batchesLabel}`, 9, { bold: true, size: 13, color: C.navy, bg: C.subFill, border: med });
-    titleRow(ws, 4, `Date:- ${fmtDateDMY(meta.dateISO)}          Time:- ${shiftLabels.join(' & ')}`, 9, { bold: true, size: 13, color: C.navy, bg: C.subFill, border: med });
-    ws.getRow(1).height = 32;
-    const H = ['Reg. No.', 'Building', 'Room No.', 'Seat No.'];
-    H.forEach((h, i) => {
-      [i + 1, i + 6].forEach((col) => { const c = ws.getCell(5, col); c.value = h; style(c, { bold: true, size: 11, color: C.green, bg: C.headFill, border: med }); });
-    });
-    const half = Math.ceil(rows.length / 2);
-    for (let i = 0; i < half; i++) {
-      [[rows[i], 1], [rows[i + half], 6]].forEach(([r, col]) => {
-        if (!r) return;
-        [asNum(r.Roll_Number), r.Building, roomVal(r['Room No.']), r['Seat No.']].forEach((v, j) => { const c = ws.getCell(6 + i, col + j); c.value = v; style(c); });
+    const sub = { bold: true, size: 13, color: C.navy, bg: C.subFill, border: med };
+    let r = 1;
+    if (many) { titleRow(ws, r, day.dayTitle || 'Test Seating Arrangement', 9, { bold: true, size: 22, color: C.navy, bg: C.titleFill, border: med }); ws.getRow(r).height = 32; r += 2; }
+    P.forEach((p, pi) => {
+      titleRow(ws, r, p.meta.title, 9, { bold: true, size: many ? 16 : 22, color: C.navy, bg: C.titleFill, border: med });
+      ws.getRow(r).height = many ? 26 : 32; r++;
+      titleRow(ws, r++, `Mode: ${p.meta.modeLabel}`, 9, sub);
+      titleRow(ws, r++, `Batch: ${p.meta.batchesLabel}`, 9, sub);
+      titleRow(ws, r++, `Date:- ${fmtDateDMY(dateISO)}          Time:- ${p.shiftLabels.join(' & ')}`, 9, sub);
+      ['Reg. No.', 'Building', 'Room No.', 'Seat No.'].forEach((h, i) => {
+        [i + 1, i + 6].forEach((col) => { const c = ws.getCell(r, col); c.value = h; style(c, { bold: true, size: 11, color: C.green, bg: C.headFill, border: med }); });
       });
-    }
-    ws.pageSetup = { orientation: 'portrait', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0, printTitlesRow: '5:5' };
+      r++;
+      const half = Math.ceil(p.rows.length / 2);
+      for (let i = 0; i < half; i++) {
+        [[p.rows[i], 1], [p.rows[i + half], 6]].forEach(([s, col]) => {
+          if (!s) return;
+          [asNum(s.Roll_Number), s.Building, roomVal(s['Room No.']), s['Seat No.']].forEach((v, j) => { const c = ws.getCell(r + i, col + j); c.value = v; style(c); });
+        });
+      }
+      r += half;
+      if (pi < P.length - 1) { ws.getRow(r - 1).addPageBreak(); r += 1; }
+    });
+    ws.pageSetup = { orientation: 'portrait', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0, ...(many ? {} : { printTitlesRow: '5:5' }) };
   }
 
-  // ---------- Attendance sheets, one per shift, one block per room with a page break
-  shiftLabels.forEach((shift, si) => {
-    const ws = wb.addWorksheet(`Attendance_${si + 1}Shift`);
+  // ---------- Attendance: one sheet, a block per paper, shift and room, each on its own page
+  {
+    const ws = wb.addWorksheet('Attendance');
     ws.columns = [{ width: 12.7 }, { width: 34.6 }, { width: 9.1 }, { width: 43.9 }];
     let r = 1;
-    for (const room of rooms) {
-      const occ = rows.filter((s) => s.Building === room.building && String(s['Room No.']) === String(room.room))
-        .sort((a, b) => a['Seat No.'] - b['Seat No.']);
-      titleRow(ws, r, `${room.building}  |  Room ${room.room}  |  ${fmtDateLong(meta.dateISO)}  |  ${shift}  (${occ.length} students)`, 4,
-        { bold: true, size: 12, color: C.navy, bg: C.titleFill });
-      r++;
-      ['Reg. No.', 'Student Name', 'Seat No.', `Signature (${shift})`].forEach((h, i) => {
-        const c = ws.getCell(r, i + 1);
-        c.value = h;
-        style(c, { bold: true, size: 11, color: C.green, bg: C.headFill });
-      });
-      r++;
-      for (const s of occ) {
-        [asNum(s.Roll_Number), s.Student_Name, s['Seat No.'], null].forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v; style(c); });
-        ws.getRow(r).height = 20;
-        r++;
+    for (const p of P) p.shiftLabels.forEach((shift) => {
+      for (const room of p.rooms) {
+        const occ = inRoom(p.rows, room).sort((a, b) => a['Seat No.'] - b['Seat No.']);
+        titleRow(ws, r++, `${many ? `${p.name}  |  ` : ''}${room.building}  |  Room ${room.room}  |  ${fmtDateLong(dateISO)}  |  ${shift}  (${occ.length} students)`, 4,
+          { bold: true, size: 12, color: C.navy, bg: C.titleFill });
+        head(ws, r++, ['Reg. No.', 'Student Name', 'Seat No.', `Signature (${shift})`], { bold: true, size: 11, color: C.green, bg: C.headFill });
+        for (const s of occ) {
+          [asNum(s.Roll_Number), s.Student_Name, s['Seat No.'], null].forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v; style(c); });
+          ws.getRow(r).height = 20;
+          r++;
+        }
+        const t = ws.getCell(r, 4);
+        t.value = `Total: ${occ.length} students`;
+        style(t, { bold: true, color: C.brown, bg: C.totFill, align: { horizontal: 'right' } });
+        ws.getRow(r).addPageBreak();
+        r += 2;
       }
-      const t = ws.getCell(r, 4);
-      t.value = `Total: ${occ.length} students`;
-      style(t, { bold: true, color: C.brown, bg: C.totFill, align: { horizontal: 'right' } });
-      ws.getRow(r).addPageBreak();
-      r += 2;
-    }
+    });
     ws.pageSetup = { orientation: 'portrait', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
-  });
+  }
 
-  // ---------- SMD: count per room by phase, block per building
+  // ---------- SMD: count per room by phase, block per building (per paper)
   {
     const ws = wb.addWorksheet('SMD');
+    const phases = [...new Set(P.flatMap((p) => p.rows.map((x) => x.CB)))].sort();
     const ncol = 3 + phases.length;
     ws.columns = [{ width: 12 }, { width: 11 }, ...phases.map(() => ({ width: 11 })), { width: 13 }];
-    const grand = Object.fromEntries(phases.map((p) => [p, 0]));
     let r = 1;
-    const buildings = [...new Set(rooms.map((x) => x.building))];
-    for (const b of buildings) {
-      titleRow(ws, r++, `🏢  ${b}`, ncol, { bold: true, size: 12, color: C.navy, bg: C.titleFill });
-      ['Building', 'Room No.', ...phases, 'Grand Total'].forEach((h, i) => { const c = ws.getCell(r, i + 1); c.value = h; style(c, { bold: true, size: 11, color: C.green, bg: C.headFill, border: med }); });
-      r++;
-      const bt = Object.fromEntries(phases.map((p) => [p, 0]));
-      for (const room of rooms.filter((x) => x.building === b)) {
-        const occ = rows.filter((s) => s.Building === b && String(s['Room No.']) === String(room.room));
-        const counts = phases.map((p) => occ.filter((s) => s.CB === p).length);
-        counts.forEach((n, i) => { bt[phases[i]] += n; });
-        [b, roomVal(room.room), ...counts.map((n) => n || null), occ.length].forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v; style(c); });
-        r++;
+    for (const p of P) {
+      if (many) titleRow(ws, r++, `${p.name}  |  ${p.shiftLabels.join(' & ')}`, ncol, { bold: true, size: 13, color: C.white, bg: C.navy });
+      const grand = Object.fromEntries(phases.map((x) => [x, 0]));
+      for (const b of [...new Set(p.rooms.map((x) => x.building))]) {
+        titleRow(ws, r++, `🏢  ${b}`, ncol, { bold: true, size: 12, color: C.navy, bg: C.titleFill });
+        head(ws, r++, ['Building', 'Room No.', ...phases, 'Grand Total']);
+        const bt = Object.fromEntries(phases.map((x) => [x, 0]));
+        for (const room of p.rooms.filter((x) => x.building === b)) {
+          const occ = inRoom(p.rows, room);
+          const counts = phases.map((x) => occ.filter((s) => s.CB === x).length);
+          counts.forEach((n, i) => { bt[phases[i]] += n; });
+          [b, roomVal(room.room), ...counts.map((n) => n || null), occ.length].forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v; style(c); });
+          r++;
+        }
+        const btTotal = phases.reduce((a, x) => a + bt[x], 0);
+        [`${b} Total`, null, ...phases.map((x) => bt[x]), btTotal].forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v; style(c, { bold: true, color: C.navy, bg: C.bTotFill, border: med }); });
+        phases.forEach((x) => { grand[x] += bt[x]; });
+        r += 2;
       }
-      const btTotal = phases.reduce((a, p) => a + bt[p], 0);
-      [`${b} Total`, null, ...phases.map((p) => bt[p]), btTotal].forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v; style(c, { bold: true, color: C.navy, bg: C.bTotFill, border: med }); });
-      phases.forEach((p) => { grand[p] += bt[p]; });
-      r += 2;
+      [many ? `${p.name} Total` : 'Grand Total', null, ...phases.map((x) => grand[x]), p.rows.length].forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v; style(c, { bold: true, size: 11, color: C.navy, bg: C.subFill, border: med }); });
+      r += 3;
     }
-    ['Grand Total', null, ...phases.map((p) => grand[p]), rows.length].forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v; style(c, { bold: true, size: 11, color: C.navy, bg: C.subFill, border: med }); });
   }
 
   // ---------- Room_Layout: seat grid per room (seats run down each column, like the room list)
   {
     const ws = wb.addWorksheet('Room_Layout');
     let r = 1;
-    const maxCols = Math.max(4, ...rooms.map((x) => x.cols || Math.min(10, Math.max(2, Math.ceil(x.capacity / 12)))));
-    ws.columns = Array.from({ length: maxCols }, () => ({ width: 15 }));
-    for (const room of rooms) {
-      const cols = room.cols || Math.min(10, Math.max(2, Math.ceil(room.capacity / 12)));
+    const allRooms = P.flatMap((p) => p.rooms);
+    const colsOf = (x) => x.cols || Math.min(10, Math.max(2, Math.ceil(x.capacity / 12)));
+    ws.columns = Array.from({ length: Math.max(4, ...allRooms.map(colsOf)) }, () => ({ width: 15 }));
+    for (const p of P) for (const room of p.rooms) {
+      const cols = colsOf(room);
       const nrows = Math.ceil(room.capacity / cols);
       const bySeat = {};
-      rows.filter((s) => s.Building === room.building && String(s['Room No.']) === String(room.room)).forEach((s) => { bySeat[s['Seat No.']] = s; });
-      titleRow(ws, r++, `${room.building} | Room No. ${room.room} | Strength ${room.capacity} | Allotted ${room.used}`, cols,
+      inRoom(p.rows, room).forEach((s) => { bySeat[s['Seat No.']] = s; });
+      titleRow(ws, r++, `${many ? `${p.name} | ` : ''}${room.building} | Room No. ${room.room} | Strength ${room.capacity} | Allotted ${room.used}`, cols,
         { bold: true, size: 12, color: C.navy, bg: C.titleFill });
       for (let i = 0; i < cols; i++) { const c = ws.getCell(r, i + 1); c.value = 'Seat / Reg. No.'; style(c, { bold: true, color: C.green, bg: C.headFill }); }
       r++;
@@ -202,18 +220,16 @@ export function buildWorkbook(ExcelJS, result, meta) {
     }
   }
 
-  // ---------- Master_List: building entrance display (notice board)
-  {
-    const ws = wb.addWorksheet('Master_List');
-    noticeBoard(ws, [{ title: meta.title, rows, rooms, shiftLabels }], meta);
-  }
+  // ---------- Master_List: building entrance display (notice board), every paper on one sheet
+  noticeBoard(wb.addWorksheet('Master_List'), P.map((p) => ({ title: p.meta.title, rows: p.rows, rooms: p.rooms, shiftLabels: p.shiftLabels })), { dateISO, dayTitle: day.dayTitle });
 
   // ---------- Not_Seated (only when someone could not get a seat)
-  if (result.unseated.length) {
+  const unseated = P.flatMap((p) => p.result.unseated.map((s) => ({ ...s, Paper: p.name })));
+  if (unseated.length) {
     const ws = wb.addWorksheet('Not_Seated');
-    ws.columns = ['Roll_Number', 'Student_Name', 'Batch', 'Course', 'Reason'].map((h) => ({ header: h, key: h, width: h === 'Student_Name' ? 30 : 14 }));
+    ws.columns = ['Roll_Number', 'Student_Name', 'Batch', 'Course', ...paperCol, 'Reason'].map((h) => ({ header: h, key: h, width: h === 'Student_Name' || h === 'Paper' ? 30 : 14 }));
     ws.getRow(1).eachCell((c) => style(c, { bold: true, color: C.brown, bg: C.totFill }));
-    result.unseated.forEach((s) => ws.addRow({ ...s, Reason: s.Reason || 'No seat available' }));
+    unseated.forEach((s) => ws.addRow({ ...s, Reason: s.Reason || 'No seat available' }));
   }
 
   return wb;

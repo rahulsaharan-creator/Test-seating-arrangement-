@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import defaults from './data/defaults.json';
 import { allocate, capacity, naturalCompare, isGirl, roomKey, FLAGS, SEAT_ORDERS } from './lib/engine.js';
-import { buildWorkbook, buildNoticeBoard, fmtDateDMY, fmtTime } from './lib/exporter.js';
+import { buildWorkbookAll, buildNoticeBoard, fmtDateDMY, fmtTime } from './lib/exporter.js';
 import { readAdmissions, readRooms, readRollList, parseRolls } from './lib/readers.js';
 import { parsePhaseList, groupPhases, seatSummary, fillPreview } from './lib/plan.js';
 
 const loadExcel = () => import('exceljs').then((m) => m.default || m);
 const STORE = 'seating-settings-v1';
-const LAST = 'seating-last-test-v4';
+const LAST = 'seating-last-test-v5';
 const GAP = 15; // minutes: papers closer than this count as overlapping (students leaving and arriving)
 
 const allBuildingsOf = (rooms, labs, order = []) => [...new Set([...order, ...rooms.map((r) => r.building), ...labs.map((r) => r.building)])];
@@ -33,17 +33,19 @@ function loadLast() {
   try { return JSON.parse(localStorage.getItem(LAST)) || null; } catch { return null; }
 }
 const uid = () => Math.random().toString(36).slice(2, 8);
-// A paper: name, courses, phases, mode (Online / Offline / Both) and one or more time slots.
-// A time slot: its time, its batches (online ones listed in online when the paper is Both), labs, buildings and removed rooms.
+// A test: its courses and one or more papers (stored as slots).
+// A paper (slot): name, 1 or 2 shifts and their times, mode (Online / Offline / Both), phases, batches
+// (online ones listed in online when the mode is Both), labs, buildings and removed rooms.
 const newSlot = (start = '09:00', end = '12:00') => {
   const s2 = hhmm(mins(end) + 120);
-  return { id: uid(), start, end, two: false, s2: { start: s2, end: hhmm(mins(s2) + (mins(end) - mins(start))) }, batches: [], online: [], labs: null, buildings: null, roomsOff: [] };
+  return { id: uid(), name: '', mode: '', phases: [], start, end, two: false, s2: { start: s2, end: hhmm(mins(s2) + (mins(end) - mins(start))) }, batches: [], online: [], labs: null, buildings: null, roomsOff: [] };
 };
 // A time slot in 1 shift, or in 2 shifts with the same seating (a student keeps one seat; an attendance sheet per shift)
 const slotLabel = (s) => (s.two ? `${range(s)} and ${range(s.s2)}` : range(s));
 const slotOk = (s) => shiftOk(s) && (!s.two || (shiftOk(s.s2) && mins(s.s2.start) >= mins(s.end)));
-const unitOf = (p, s, many) => ({ id: s.id, name: many ? `${p.name} · ${slotLabel(s)}` : p.name, mode: '', two: !!s.two, s1: { start: s.start, end: s.end }, s2: s.s2 });
-const newPaper = () => ({ id: uid(), name: '', courses: [], phases: [], mode: '', slots: [newSlot()], done: false });
+const slotName = (p, s) => (s.name || '').trim() || `Paper ${p.slots.indexOf(s) + 1}`;
+const unitOf = (p, s) => ({ id: s.id, name: slotName(p, s), mode: '', two: !!s.two, s1: { start: s.start, end: s.end }, s2: s.s2 });
+const newPaper = () => ({ id: uid(), name: '', courses: [], slots: [newSlot()], done: false });
 function initialTest() {
   const last = loadLast();
   if (last && Array.isArray(last.papers) && last.papers.length) return { title: last.title || '', date: '', papers: last.papers.map((p) => ({ ...newPaper(), ...p, slots: (p.slots || [newSlot()]).map((s) => ({ ...newSlot(), ...s })), done: false })) };
@@ -162,12 +164,12 @@ export default function App() {
 
   // Phase owner (a phase is in one paper only) and batch owner (a batch is in one time slot only)
   const ownerOf = {}, slotOf = {};
-  for (const p of papers) {
-    for (const k of p.phases) ownerOf[k] ||= p.id;
-    for (const s of p.slots) for (const b of s.batches) slotOf[b] ||= { paper: p.id, slot: s.id };
+  for (const p of papers) for (const s of p.slots) {
+    for (const k of s.phases) ownerOf[k] ||= s.id;
+    for (const b of s.batches) slotOf[b] ||= { paper: p.id, slot: s.id };
   }
-  const phaseBatches = (p) => phases.filter((g) => p.phases.includes(g.key)).flatMap((g) => g.batches);
-  const modeIn = (p, s, b) => (p.mode === 'Online' ? 'Online' : p.mode === 'Offline' ? 'Offline' : s.online.includes(b) ? 'Online' : 'Offline');
+  const phaseBatches = (s) => phases.filter((g) => s.phases.includes(g.key)).flatMap((g) => g.batches);
+  const modeIn = (p, s, b) => (s.mode === 'Online' ? 'Online' : s.mode === 'Offline' ? 'Offline' : s.online.includes(b) ? 'Online' : 'Offline');
   const labsOn = settings.labs.filter((l) => l.enabled && Number(l.capacity) > 0);
   const roomsOn = settings.rooms.filter((r) => r.enabled && Number(r.capacity) > 0);
   // Until the operator picks labs and buildings for a time slot, every lab and every building in use counts for the estimate
@@ -177,14 +179,12 @@ export default function App() {
   const sumSeats = (list) => list.reduce((a, r) => a + Number(r.capacity || 0), 0);
   const countSlot = (p, s) => {
     const c = { online: 0, offline: 0 };
-    for (const b of s.batches) for (const st of studentsByBatch[b] || []) c[((p.mode === 'Both' && studentMode[st.Roll_Number]) || modeIn(p, s, b)) === 'Online' ? 'online' : 'offline']++;
+    for (const b of s.batches) for (const st of studentsByBatch[b] || []) c[((s.mode === 'Both' && studentMode[st.Roll_Number]) || modeIn(p, s, b)) === 'Online' ? 'online' : 'offline']++;
     return c;
   };
   const sumSlot = (p, s) => seatSummary({ ...countSlot(p, s), labSeats: sumSeats(slotLabs(s)), roomSeats: sumSeats(slotRooms(s)) });
   const addUp = (list) => list.reduce((a, x) => { for (const k of Object.keys(x)) a[k] = (a[k] || 0) + x[k]; return a; }, {});
-  const summaryOf = (p) => addUp(p.slots.filter((s) => s.batches.length).map((s) => sumSlot(p, s)).concat([seatSummary({})]));
-  const paperOk = (p) => !!(p.name.trim() && p.courses.length && p.phases.length && p.mode && p.slots.every(slotOk) && p.slots.some((s) => s.batches.length));
-  const curSum = curP ? summaryOf(curP) : null;
+  const paperOk = (p) => !!(p.courses.length && p.slots.every((s) => slotOk(s) && s.mode && s.phases.length && s.batches.length));
 
   // Special students: Monitoring and Due fee from the lists on step 1, Top batch from the Top ticks
   const flags = useMemo(() => {
@@ -212,22 +212,46 @@ export default function App() {
     const c = addUp(g.items.map((x) => countSlot(x.p, x.s)).concat([{ online: 0, offline: 0 }]));
     const labs = new Map(), rooms = new Map();
     for (const x of g.items) { for (const l of slotLabs(x.s)) labs.set(roomKey(l), l); for (const r of slotRooms(x.s)) rooms.set(roomKey(r), r); }
-    Object.assign(g, seatSummary({ ...c, labSeats: sumSeats([...labs.values()]), roomSeats: sumSeats([...rooms.values()]) }), { papers: [...new Set(g.items.map((x) => x.p.name || 'Paper'))] });
+    Object.assign(g, seatSummary({ ...c, labSeats: sumSeats([...labs.values()]), roomSeats: sumSeats([...rooms.values()]) }), { papers: [...new Set(g.items.map((x) => slotName(x.p, x.s)))] });
   }
-  // Lab seats an overlapping time slot of another paper (or another time of this paper) already fills: { labKey: { filled, by } }
-  const takenFor = (p, s) => {
-    const me = windowOf(unitOf(p, s)), out = {};
-    for (const x of allSlots) {
-      if (x.s.id === s.id || !x.s.labs || !x.s.labs.length) continue;
-      if (!(mins(x.w.start) < mins(me.end) + GAP && mins(me.start) < mins(x.w.end) + GAP)) continue;
-      for (const r of fillPreview(countSlot(x.p, x.s).online, slotLabs(x.s), settings.buildingOrder).rooms) {
+  // Seat plan in seating order (time order, then the order on the page): a paper that overlaps an earlier one
+  // sees the lab and classroom seats the earlier one fills. plan[slotId] = { taken: { labs, rooms }, labs, rooms, offNeed }
+  const near = (a, b) => mins(a.start) < mins(b.end) + GAP && mins(b.start) < mins(a.end) + GAP;
+  const plan = {};
+  for (const x of allSlots) {
+    const taken = { labs: {}, rooms: {} };
+    for (const y of allSlots) {
+      if (y === x) break;
+      if (!near(x.w, y.w)) continue;
+      for (const kind of ['labs', 'rooms']) for (const r of plan[y.s.id][kind]) {
         if (!r.filled) continue;
-        const k = roomKey(r);
-        out[k] = { filled: (out[k]?.filled || 0) + r.filled, by: [...new Set([...(out[k]?.by || []), x.p.name || 'another paper'])] };
+        const k = roomKey(r), o = taken[kind][k];
+        taken[kind][k] = { filled: (o?.filled || 0) + r.filled, by: [...new Set([...(o?.by || []), slotName(y.p, y.s)])] };
       }
     }
-    return out;
-  };
+    const freeOf = (list, kind) => list.map((r) => ({ ...r, capacity: Math.max(0, Number(r.capacity) - (taken[kind][roomKey(r)]?.filled || 0)) }));
+    const c = countSlot(x.p, x.s);
+    const labsSet = x.s.labs && x.s.labs.length;
+    const lab = labsSet ? fillPreview(c.online, freeOf(slotLabs(x.s), 'labs'), settings.buildingOrder) : { rooms: [], left: Math.max(0, c.online - sumSeats(slotLabs(x.s))) };
+    const offNeed = c.offline + lab.left;
+    const room = x.s.buildings && x.s.buildings.length ? fillPreview(offNeed, freeOf(slotRooms(x.s), 'rooms'), settings.buildingOrder) : { rooms: [] };
+    plan[x.s.id] = { taken, labs: lab.rooms, rooms: room.rooms, offNeed };
+  }
+  const planOf = (s) => plan[s.id] || { taken: { labs: {}, rooms: {} }, labs: [], rooms: [], offNeed: 0 };
+  // Room capacity for one building: by a percentage or by a number of seats shared equally, always from the original capacity
+  const adjustCap = (b, how, v) => setSettings((st) => {
+    const idx = st.rooms.map((r, i) => [r, i]).filter(([r]) => r.building === b && r.enabled);
+    const n = idx.length;
+    if (!n) return st;
+    const rooms = st.rooms.slice();
+    idx.forEach(([r, i], j) => {
+      const base = r.base ?? Number(r.capacity);
+      const cap = how === 'pct' ? Math.round((base * v) / 100) : how === 'num' ? base + Math.trunc(v / n) + (j < Math.abs(v % n) ? Math.sign(v) : 0) : base;
+      rooms[i] = how === 'reset' ? { ...r, capacity: base, base: undefined } : { ...r, base, capacity: Math.max(0, cap) };
+    });
+    return { ...st, rooms };
+  });
+  const setRoomCap = (k, v) => setSettings((st) => ({ ...st, rooms: st.rooms.map((r) => (roomKey(r) === k ? { ...r, base: r.base ?? Number(r.capacity), capacity: Math.max(0, Number(v) || 0) } : r)) }));
 
   // ---------- handlers
   async function onAdmission(file) {
@@ -291,7 +315,7 @@ export default function App() {
     const units = [];
     for (const p of list) if (p.done) {
       const used = p.slots.filter((s) => s.batches.length);
-      for (const s of used) units.push({ p, s, unit: unitOf(p, s, used.length > 1) });
+      for (const s of used) units.push({ p, s, unit: unitOf(p, s) });
     }
     units.sort((a, b) => mins(a.s.start) - mins(b.s.start));
     const done = [];
@@ -310,7 +334,7 @@ export default function App() {
         labs: settings.labs.map((l) => ({ ...l, enabled: labKeys.has(roomKey(l)) })),
         buildingOrder: settings.buildingOrder, girlsOk: settings.girlsOk,
         batchMode: Object.fromEntries(bs.map((b) => [b.batch, modeIn(p, s, b.batch)])),
-        studentMode: p.mode === 'Both' ? studentMode : {}, flags, pins: settings.pins, cbOf,
+        studentMode: s.mode === 'Both' ? studentMode : {}, flags, pins: settings.pins, cbOf,
         seatOrder: settings.seatOrder || 'mixed', apart: !!settings.apart, seed: newSeed + i, taken,
       };
       done.push({ paper: unit, index: i, result: allocate(st, cfg), batches: bs, students: st.length, overlapsWith: over.map((d) => d.index) });
@@ -330,6 +354,7 @@ export default function App() {
     const head = test.title || `${cs.join(' & ') || 'Test'} Seating Arrangement`;
     const sh = shiftsOf(x.paper);
     return {
+      paper: x.paper.name,
       title: results && results.length > 1 ? `${head} - ${x.paper.name}` : head,
       dateISO: test.date,
       shifts: sh.map((s) => s.start),
@@ -340,17 +365,15 @@ export default function App() {
   };
 
   const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-  async function download(list) {
-    const todo = list.filter((x) => x.batches.length);
-    setBusy(todo.length > 1 ? `Building ${todo.length} Excel files…` : 'Building the Excel file…');
+  const dayTitle = () => test.title || `${[...new Set((results || []).flatMap((x) => x.batches.map((b) => b.course)))].join(' & ') || 'Test'} Seating Arrangement`;
+  // One Excel file for every paper of the day
+  async function download() {
+    const todo = results.filter((x) => x.batches.length);
+    setBusy('Building the Excel file…');
     try {
       const ExcelJS = await loadExcel();
-      for (const x of todo) {
-        const meta = metaFor(x);
-        const buf = await buildWorkbook(ExcelJS, x.result, meta).xlsx.writeBuffer();
-        saveBlob(new Blob([buf], { type: XLSX }), `${meta.title.replace(/[^\w]+/g, '_')}_${fmtDateDMY(test.date)}.xlsx`);
-        await new Promise((r) => setTimeout(r, 400));
-      }
+      const wb = buildWorkbookAll(ExcelJS, todo.map((x) => ({ result: x.result, meta: metaFor(x) })), { dateISO: test.date, dayTitle: dayTitle() });
+      saveBlob(new Blob([await wb.xlsx.writeBuffer()], { type: XLSX }), `${dayTitle().replace(/[^\w]+/g, '_')}_${fmtDateDMY(test.date)}.xlsx`);
     } catch (e) { setError(`Could not build the file: ${e.message}`); }
     setBusy('');
   }
@@ -358,8 +381,7 @@ export default function App() {
     setBusy('Building the notice board…');
     try {
       const ExcelJS = await loadExcel();
-      const dayTitle = test.title || 'Test Seating Arrangement';
-      const wb = buildNoticeBoard(ExcelJS, results.filter((x) => x.batches.length).map((x) => ({ result: x.result, meta: metaFor(x) })), { dateISO: test.date, dayTitle });
+      const wb = buildNoticeBoard(ExcelJS, results.filter((x) => x.batches.length).map((x) => ({ result: x.result, meta: metaFor(x) })), { dateISO: test.date, dayTitle: dayTitle() });
       saveBlob(new Blob([await wb.xlsx.writeBuffer()], { type: XLSX }), `Notice_board_${fmtDateDMY(test.date)}.xlsx`);
     } catch (e) { setError(`Could not build the notice board: ${e.message}`); }
     setBusy('');
@@ -369,7 +391,7 @@ export default function App() {
   const canOpen = (id) => (id === 'students' ? true : id === 'test' ? !!adm : id === 'result' ? !!results : setupOk);
   const doneMark = (id) => (id === 'students' ? !!adm : id === 'test' ? papers.some((p) => p.done) : false);
   const labsNeeded = curP ? curP.slots.some((s) => countSlot(curP, s).online > 0) : false;
-  const offlineNeeded = curSum ? curSum.offline > 0 : false;
+  const offlineNeeded = curP ? curP.slots.some((s) => s.batches.length && planOf(s).offNeed > 0) : false;
 
   return (
     <div className="app">
@@ -378,7 +400,7 @@ export default function App() {
           <div className="logo">
             <img src="/brand/matrix-logo-green.png" alt="Matrix Academy" className="logo-img" />
             <span className="sep" aria-hidden="true" />
-            <div className="brand"><b>Test <em>Seating</em></b><span className="chip">{test.date ? `${fmtDateDMY(test.date)} · ${pl(papers.length, 'paper')}` : 'No test date yet'}</span></div>
+            <div className="brand"><b>Test <em>Seating</em></b><span className="chip">{test.date ? `${fmtDateDMY(test.date)} · ${pl(papers.reduce((a, p) => a + p.slots.length, 0), 'paper')}` : 'No test date yet'}</span></div>
           </div>
           <nav className="stepper" aria-label="Steps">
             {STEPS.filter((s) => s.id !== 'labs' || labsNeeded || step === 'labs').map((s, i) => {
@@ -437,17 +459,17 @@ export default function App() {
         {step === 'test' && (
           <PaperStep test={test} setTest={setTest} setPaper={setPaper} setSlot={setSlot} courses={courses} phases={phases} ownerOf={ownerOf} slotOf={slotOf}
             batchMap={batchMap} phaseBatches={phaseBatches} studentsByBatch={studentsByBatch} studentMode={studentMode} setStudentMode={setStudentMode}
-            top={top} setTop={setTop} summaryOf={summaryOf} sumSlot={sumSlot} paperOk={paperOk} start={startPaper} back={() => setStep('students')} />
+            top={top} setTop={setTop} sumSlot={sumSlot} paperOk={paperOk} start={startPaper} back={() => setStep('students')} />
         )}
 
         {step === 'labs' && curP && (
-          <LabStep p={curP} idx={curIdx} labsOn={labsOn} order={settings.buildingOrder} setSlot={setSlot} countSlot={countSlot} takenFor={takenFor}
+          <LabStep p={curP} idx={curIdx} labsOn={labsOn} order={settings.buildingOrder} setSlot={setSlot} countSlot={countSlot} planOf={planOf}
             back={() => setStep('test')} next={() => setStep(offlineNeeded ? 'rooms' : 'rules')} />
         )}
 
         {step === 'rooms' && curP && (
-          <RoomStep p={curP} idx={curIdx} settings={settings} setSettings={setSettings} setSlot={setSlot} sumSlot={sumSlot}
-            roomsOn={roomsOn} slotRooms={slotRooms} onRoomFile={onRoomFile}
+          <RoomStep p={curP} idx={curIdx} settings={settings} setSettings={setSettings} setSlot={setSlot} planOf={planOf}
+            roomsOn={roomsOn} slotRooms={slotRooms} onRoomFile={onRoomFile} adjustCap={adjustCap} setRoomCap={setRoomCap}
             back={() => setStep(labsNeeded ? 'labs' : 'test')} next={() => setStep('rules')} />
         )}
 
@@ -464,7 +486,7 @@ export default function App() {
             download={download} downloadBoard={downloadBoard} back={() => setStep('rooms')} />
         )}
         {step === 'result' && results && papers.some((p) => !p.done) && (
-          <div className="alert info"><span>{papers.filter((p) => !p.done).map((p, i) => p.name || `Paper ${i + 1}`).join(', ')}: seating not made yet.</span><button className="btn sm" onClick={() => setStep('test')}>Set up next paper</button></div>
+          <div className="alert info"><span>{papers.map((p, i) => (p.done ? '' : `Test ${i + 1}`)).filter(Boolean).join(', ')}: seating not made yet.</span><button className="btn sm" onClick={() => setStep('test')}>Set up next paper</button></div>
         )}
       </main>
       <footer className="foot">Matrix Academy, Sikar · Operations · Student data stays in this browser</footer>
@@ -491,7 +513,7 @@ function SummaryBar({ adm, papers, appearing, groups, special, results, goRules 
     const notSeated = results.reduce((a, x) => a + x.result.unseated.length, 0);
     return (
       <div className="sumbox" role="status">
-        <Tile label="Students seated" value={n(all.length)} sub={`in ${pl(results.length, 'time slot')}`} />
+        <Tile label="Students seated" value={n(all.length)} sub={`in ${pl(results.length, 'paper')}`} />
         <Tile label="Online (labs)" value={n(on)} tone="good" sub="students in computer labs" />
         <Tile label="Offline (classrooms)" value={n(all.length - on)} sub={moved ? `${n(moved)} moved from online, labs full` : 'students in classrooms'} />
         <Tile label="Without a seat" value={n(notSeated)} tone={notSeated ? 'bad' : 'good'} sub={notSeated ? 'see the Not_Seated sheet' : 'everyone has a seat'} />
@@ -501,13 +523,13 @@ function SummaryBar({ adm, papers, appearing, groups, special, results, goRules 
   }
   return (
     <div className="sumbox" role="status">
-      <Tile label="Active students" value={n(adm.students.length)} sub={`${n(appearing)} appearing · ${pl(papers.length, 'paper')}`} />
+      <Tile label="Active students" value={n(adm.students.length)} sub={`${n(appearing)} appearing · ${pl(papers.reduce((a, p) => a + p.slots.length, 0), 'paper')}`} />
       {!groups.length && <Tile label="Seats" value="–" sub="Tick batches to see online and offline seats" />}
       {groups.map((g) => (
         <Tile key={g.start} label={`${range(g)} · ${g.papers.join(', ')}`} value={`${n(g.online + g.offline - g.overflow)} students`} tone={g.offlineShort ? 'bad' : g.onlineShort ? 'warn' : 'good'}>
           {g.online > 0 && <span className="tile-s"><b>Online:</b> {n(g.online - g.overflow)} / {n(g.onlineSeats)} lab seats · {g.onlineShort ? `${n(g.onlineShort)} go offline (labs full)` : `${n(g.onlineLeft)} free`}</span>}
           {(g.offline > 0 || g.overflow > 0) && <span className="tile-s"><b>Offline:</b> {n(g.offline)} / {n(g.offlineSeats)} classroom seats · {g.offlineShort ? `${n(g.offlineShort)} without a seat` : `${n(g.offlineLeft)} free`}</span>}
-          {g.items.length > 1 && <span className="tile-s muted">{g.items.length} papers or times share these labs and rooms</span>}
+          {g.items.length > 1 && <span className="tile-s muted">{g.items.length} papers at this time share these labs and rooms</span>}
         </Tile>
       ))}
       {specials}
@@ -532,7 +554,7 @@ function Guide() {
       <div><span className="kicker">First time here?</span><h2>Seating sheet in five steps</h2></div>
       <ol>
         <li><i>1</i><b>Admission list</b><span>Upload the admission list (and, if any, monitoring and due fee lists).</span></li>
-        <li><i>2</i><b>Test and papers</b><span>Each paper: courses, phases, online or offline, time, batches.</span></li>
+        <li><i>2</i><b>Test and papers</b><span>Courses, then each paper: name, shifts, online or offline, phases, batches.</span></li>
         <li><i>3</i><b>Labs</b><span>Tick labs until every online student has a seat.</span></li>
         <li><i>4</i><b>Buildings</b><span>Tick buildings for the offline students; leave out rooms if needed.</span></li>
         <li><i>5</i><b>Shuffle rules</b><span>Seat order and rooms for monitoring and due fee students, then Prepare.</span></li>
@@ -574,12 +596,12 @@ function Nav({ back, next, nextOk = true, nextLabel = 'Continue', hint, children
   );
 }
 
-function PaperStep({ test, setTest, setPaper, setSlot, courses, phases, ownerOf, slotOf, batchMap, phaseBatches, studentsByBatch, studentMode, setStudentMode, top, setTop, summaryOf, sumSlot, paperOk, start, back }) {
+function PaperStep({ test, setTest, setPaper, setSlot, courses, phases, ownerOf, slotOf, phaseBatches, studentsByBatch, studentMode, setStudentMode, top, setTop, sumSlot, paperOk, start, back }) {
   const addPaper = () => setTest({ ...test, papers: [...test.papers, newPaper()] });
   const removePaper = (id) => setTest({ ...test, papers: test.papers.filter((p) => p.id !== id) });
   return (
     <section>
-      <Head kicker="Step 2" title="Test and papers" lead="Pick the date. For each paper answer the questions in order. The seat summary at the top updates as you click." />
+      <Head kicker="Step 2" title="Test and papers" lead="Pick the date and the courses. Then set up each paper: name, 1 or 2 shifts, online or offline, phases and batches. The seat summary at the top updates as you click." />
       <div className="card form">
         <label className="field">
           <span>Test date</span>
@@ -596,12 +618,12 @@ function PaperStep({ test, setTest, setPaper, setSlot, courses, phases, ownerOf,
           <div className="papers">
             {test.papers.map((p, i) => (
               <PaperCard key={p.id} p={p} i={i} n={test.papers.length} setPaper={setPaper} setSlot={setSlot} remove={() => removePaper(p.id)}
-                courses={courses} phases={phases} ownerOf={ownerOf} slotOf={slotOf} batchMap={batchMap} pb={phaseBatches(p)}
+                courses={courses} phases={phases} ownerOf={ownerOf} slotOf={slotOf} phaseBatches={phaseBatches}
                 studentsByBatch={studentsByBatch} studentMode={studentMode} setStudentMode={setStudentMode}
-                top={top} setTop={setTop} sum={summaryOf(p)} sumSlot={sumSlot} ok={paperOk(p)} start={() => start(p)} />
+                top={top} setTop={setTop} sumSlot={sumSlot} ok={paperOk(p)} start={() => start(p)} />
             ))}
           </div>
-          <button type="button" className="addslot" onClick={addPaper}>{Ico.plus}Add another paper</button>
+          <button type="button" className="addslot" onClick={addPaper}>{Ico.plus}Add another test (other courses)</button>
         </>
       )}
       <Nav back={back} />
@@ -650,149 +672,51 @@ function SeatBoard({ s, mode }) {
   );
 }
 
-function PaperCard({ p, i, n, setPaper, setSlot, remove, courses, phases, ownerOf, slotOf, batchMap, pb, studentsByBatch, studentMode, setStudentMode, top, setTop, sum, sumSlot, ok, start }) {
-  const [open, setOpen] = useState('');
-  const [pick, setPick] = useState('');
-  const slot = p.slots.find((s) => s.id === pick) || p.slots[0];
-  const named = !!p.name.trim();
-  const toggle = (list, x) => (list.includes(x) ? list.filter((y) => y !== x) : [...list, x]);
+const toggleIn = (list, x) => (list.includes(x) ? list.filter((y) => y !== x) : [...list, x]);
+// Keep only the batches that belong to the given phases
+const keepBatches = (s, phases, keys) => {
+  const keep = new Set(phases.filter((g) => keys.includes(g.key)).flatMap((g) => g.batches.map((b) => b.batch)));
+  return { phases: keys, batches: s.batches.filter((b) => keep.has(b)), online: s.online.filter((b) => keep.has(b)) };
+};
+
+function PaperCard({ p, i, n, setPaper, setSlot, remove, courses, phases, ownerOf, slotOf, phaseBatches, studentsByBatch, studentMode, setStudentMode, top, setTop, sumSlot, ok, start }) {
   const toggleCourse = (c) => {
-    const cs = toggle(p.courses, c);
-    setPaper(p.id, { courses: cs, phases: p.phases.filter((k) => cs.includes(k.split('|')[0])) });
+    const cs = toggleIn(p.courses, c);
+    setPaper(p.id, { courses: cs, slots: p.slots.map((s) => ({ ...s, ...keepBatches(s, phases, s.phases.filter((k) => cs.includes(k.split('|')[0]))) })) });
   };
-  const toggleTop = (b) => setTop((t) => { const x = new Set(t); x.has(b) ? x.delete(b) : x.add(b); return x; });
-  // Tick a batch for the chosen time slot (moves it out of any other slot of this paper)
-  const tickBatch = (b) => {
-    const inThis = slot.batches.includes(b);
-    setPaper(p.id, { slots: p.slots.map((s) => (s.id === slot.id
-      ? { ...s, batches: inThis ? s.batches.filter((x) => x !== b) : [...s.batches, b], online: inThis ? s.online.filter((x) => x !== b) : s.online }
-      : { ...s, batches: s.batches.filter((x) => x !== b), online: s.online.filter((x) => x !== b) })) });
-  };
-  const addTime = () => {
+  const addSlot = () => {
     const last = p.slots[p.slots.length - 1];
-    const st = hhmm(mins(last.end) + 120);
+    const lastEnd = last.two ? last.s2.end : last.end;
+    const st = hhmm(mins(lastEnd) + 60);
     setPaper(p.id, { slots: [...p.slots, newSlot(st, hhmm(mins(st) + (mins(last.end) - mins(last.start))))] });
   };
-  const unplaced = pb.filter((b) => !slotOf[b.batch]).length;
   return (
     <div className="card paper">
       <div className="paper-top">
         <span className="slot-n">{i + 1}</span>
-        <label className="field grow"><span>1. Paper name</span>
-          <input type="text" placeholder="e.g. PRT-3 Paper 1" value={p.name} onChange={(e) => setPaper(p.id, { name: e.target.value })} /></label>
-        <button type="button" className="iconbtn danger" disabled={n === 1} onClick={remove} aria-label={`Remove paper ${i + 1}`} title="Remove this paper">{Ico.bin}</button>
+        <b className="grow">{n > 1 ? `Test ${i + 1}` : 'Test'}{p.courses.length ? ` · ${p.courses.join(', ')}` : ''}</b>
+        <button type="button" className="iconbtn danger" disabled={n === 1} onClick={remove} aria-label={`Remove test ${i + 1}`} title="Remove this test">{Ico.bin}</button>
       </div>
 
-      {named && (
-        <div className="q">
-          <b className="q-l">2. Courses in this paper</b>
-          <div className="chips">
-            {courses.map((c) => <button key={c} type="button" className={`chip-btn ${p.courses.includes(c) ? 'on' : ''}`} onClick={() => toggleCourse(c)}>{c}</button>)}
-          </div>
+      <div className="q">
+        <b className="q-l">1. Courses</b>
+        <div className="chips">
+          {courses.map((c) => <button key={c} type="button" className={`chip-btn ${p.courses.includes(c) ? 'on' : ''}`} onClick={() => toggleCourse(c)}>{c}</button>)}
         </div>
-      )}
+      </div>
 
-      {named && p.courses.length > 0 && (
+      {p.courses.length > 0 && (
         <div className="q">
-          <b className="q-l">3. Phases in this paper</b>
-          <div className="chips">
-            {phases.filter((g) => p.courses.includes(g.course)).map((g) => {
-              const other = ownerOf[g.key] && ownerOf[g.key] !== p.id;
-              return (
-                <button key={g.key} type="button" className={`chip-btn ${p.phases.includes(g.key) ? 'on' : ''}`} disabled={other}
-                  title={other ? 'Already in another paper' : g.batches.map((b) => b.batch).join(', ')} onClick={() => setPaper(p.id, { phases: toggle(p.phases, g.key) })}>
-                  {p.courses.length > 1 ? `${g.course} · ` : ''}{g.phase} <small>{g.count}</small>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {named && p.phases.length > 0 && (
-        <div className="q">
-          <b className="q-l">4. Online or offline?</b>
-          <div className="seg" role="group" aria-label="Online or offline">
-            {[['Online', 'Online'], ['Offline', 'Offline'], ['Both', 'Both online and offline']].map(([m, l]) => (
-              <button key={m} className={p.mode === m ? 'on' : ''} onClick={() => setPaper(p.id, { mode: m })}>{l}</button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {named && p.phases.length > 0 && p.mode && (
-        <div className="q">
-          <b className="q-l">5. Time</b>
-          <p className="muted small">One time for online and offline. Each time is in 1 shift, or in 2 shifts with the same seating. Add another time if other batches sit at a different time.</p>
+          <b className="q-l">2. Papers</b>
+          <p className="muted small">For each paper: its name, 1 or 2 shifts, online or offline, its phases, then the batches of those phases.</p>
           {p.slots.map((s, k) => (
-            <div className="timebox" key={s.id}>
-              <div className="timebox-h">
-                <b>{p.slots.length > 1 ? `Time ${k + 1}` : 'Time'}</b>
-                <div className="seg sm" role="group" aria-label="Shifts">
-                  <button className={!s.two ? 'on' : ''} onClick={() => setSlot(p, s.id, { two: false })}>1 shift</button>
-                  <button className={s.two ? 'on' : ''} onClick={() => setSlot(p, s.id, { two: true })}>2 shifts</button>
-                </div>
-                {p.slots.length > 1 && <button type="button" className="iconbtn danger" onClick={() => setPaper(p.id, { slots: p.slots.filter((x) => x.id !== s.id) })} aria-label={`Remove time ${k + 1}`} title="Remove this time">{Ico.bin}</button>}
-              </div>
-              <div className="times">
-                <TimeRow label={s.two ? 'Shift 1' : 'Time'} value={s} onChange={(v) => setSlot(p, s.id, v)} />
-                {s.two && <TimeRow label="Shift 2" value={s.s2} onChange={(v) => setSlot(p, s.id, { s2: v })} />}
-                {s.two && mins(s.s2.start) < mins(s.end) && <p className="muted small bad">Shift 2 must start after Shift 1 ends.</p>}
-                {s.two && <p className="muted small">Both shifts use the same seating: a student keeps one seat. The Excel file has an attendance sheet for each shift.</p>}
-              </div>
-            </div>
+            <PaperBox key={s.id} p={p} s={s} k={k} setPaper={setPaper} setSlot={setSlot} phases={phases} ownerOf={ownerOf} slotOf={slotOf}
+              pb={phaseBatches(s)} studentsByBatch={studentsByBatch} studentMode={studentMode} setStudentMode={setStudentMode}
+              top={top} setTop={setTop} sum={sumSlot(p, s)} />
           ))}
-          <button type="button" className="addslot sm" onClick={addTime}>{Ico.plus}Add another time</button>
+          <button type="button" className="addslot sm" onClick={addSlot}>{Ico.plus}Add another paper</button>
         </div>
       )}
-
-      {named && p.phases.length > 0 && p.mode && (
-        <div className="q">
-          <b className="q-l">6. Batches</b>
-          {p.slots.length > 1 && (
-            <>
-              <p className="muted small">Which time are you picking batches for?</p>
-              <div className="seg" role="group" aria-label="Time slot">
-                {p.slots.map((s, k) => <button key={s.id} className={slot.id === s.id ? 'on' : ''} onClick={() => setPick(s.id)}>Time {k + 1}: {slotLabel(s)} · {s.batches.length}</button>)}
-              </div>
-            </>
-          )}
-          <p className="muted small">Tick the batches sitting at {slotLabel(slot)}.{p.mode === 'Both' ? ' Then mark each one Online or Offline.' : ''} {unplaced ? `${unplaced} batches of these phases are not placed yet.` : 'Every batch of these phases is placed.'}</p>
-          <div className="batch-grid">
-            {pb.map((b) => {
-              const where = slotOf[b.batch];
-              const here = slot.batches.includes(b.batch);
-              const elsewhere = where && !here;
-              const otherK = elsewhere ? p.slots.findIndex((s) => s.id === where.slot) : -1;
-              const on = here && slot.online.includes(b.batch);
-              return (
-                <div key={b.batch} className={`batch ${here ? 'on' : ''} ${elsewhere ? 'other' : ''}`}>
-                  <label className="batch-top" title={elsewhere ? 'Picked for another time. Tick to move it here.' : ''}>
-                    <input type="checkbox" checked={here} onChange={() => tickBatch(b.batch)} disabled={elsewhere && where.paper !== p.id} />
-                    <span className="batch-name">{b.batch}</span>
-                    {elsewhere ? <span className="pill muted-pill">{otherK >= 0 ? `Time ${otherK + 1}` : 'Other paper'}</span> : <span className="batch-count">{b.count}</span>}
-                  </label>
-                  {here && (
-                    <div className="batch-opts">
-                      {p.mode === 'Both'
-                        ? <div className="seg sm">{['Online', 'Offline'].map((m) => <button key={m} className={(on ? 'Online' : 'Offline') === m ? 'on' : ''} onClick={() => setSlot(p, slot.id, { online: m === 'Online' ? [...new Set([...slot.online, b.batch])] : slot.online.filter((x) => x !== b.batch) })}>{m}</button>)}</div>
-                        : <span className="small muted">{p.mode}</span>}
-                      {p.mode === 'Both' && <button className="link small" onClick={() => setOpen(open === b.batch ? '' : b.batch)}>Students</button>}
-                      {p.mode !== 'Offline' && <label className="small top-tick" title="Top batch students take lab seats first"><input type="checkbox" checked={top.has(b.batch)} onChange={() => toggleTop(b.batch)} /> Top</label>}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          {open && slot.batches.includes(open) && (
-            <StudentModes batch={open} students={studentsByBatch[open] || []} batchMode={slot.online.includes(open) ? 'Online' : 'Offline'}
-              studentMode={studentMode} setStudentMode={setStudentMode} close={() => setOpen('')} />
-          )}
-        </div>
-      )}
-
-      {named && p.mode && p.slots.some((s) => s.batches.length) && <SeatBoard s={sum} mode={p.mode} />}
 
       {ok && (
         <div className="paper-cta">
@@ -804,6 +728,106 @@ function PaperCard({ p, i, n, setPaper, setSlot, remove, courses, phases, ownerO
   );
 }
 
+// One paper: name → shifts and times → online or offline → phases → batches of those phases
+function PaperBox({ p, s, k, setPaper, setSlot, phases, ownerOf, slotOf, pb, studentsByBatch, studentMode, setStudentMode, top, setTop, sum }) {
+  const [open, setOpen] = useState('');
+  const set = (patch) => setSlot(p, s.id, patch);
+  const label = `Paper ${k + 1}`;
+  const toggleTop = (b) => setTop((t) => { const x = new Set(t); x.has(b) ? x.delete(b) : x.add(b); return x; });
+  const free = pb.filter((b) => !slotOf[b.batch] || slotOf[b.batch].slot === s.id);
+  const tickBatch = (b) => {
+    const inThis = s.batches.includes(b);
+    set({ batches: inThis ? s.batches.filter((x) => x !== b) : [...s.batches, b], online: inThis ? s.online.filter((x) => x !== b) : s.online });
+  };
+  return (
+    <div className="timebox paperbox">
+      <div className="timebox-h">
+        <label className="field grow"><span>{label} name</span>
+          <input type="text" placeholder={`${label} (e.g. PRT-3 Paper ${k + 1})`} value={s.name} onChange={(e) => set({ name: e.target.value })} /></label>
+        {p.slots.length > 1 && <button type="button" className="iconbtn danger" onClick={() => setPaper(p.id, { slots: p.slots.filter((x) => x.id !== s.id) })} aria-label={`Remove ${label}`} title="Remove this paper">{Ico.bin}</button>}
+      </div>
+
+      <div className="q">
+        <b className="q-l">a. Shifts</b>
+        <div className="seg sm" role="group" aria-label="Shifts">
+          <button className={!s.two ? 'on' : ''} onClick={() => set({ two: false })}>1 shift</button>
+          <button className={s.two ? 'on' : ''} onClick={() => set({ two: true })}>2 shifts</button>
+        </div>
+        <div className="times">
+          <TimeRow label={s.two ? 'Shift 1' : 'Time'} value={s} onChange={(v) => set(v)} />
+          {s.two && <TimeRow label="Shift 2" value={s.s2} onChange={(v) => set({ s2: v })} />}
+          {s.two && mins(s.s2.start) < mins(s.end) && <p className="muted small bad">Shift 2 must start after Shift 1 ends.</p>}
+          {s.two && <p className="muted small">Both shifts use the same seating: a student keeps one seat. The Excel file has an attendance sheet for each shift.</p>}
+        </div>
+      </div>
+
+      <div className="q">
+        <b className="q-l">b. Online or offline?</b>
+        <div className="seg" role="group" aria-label="Online or offline">
+          {[['Online', 'Online'], ['Offline', 'Offline'], ['Both', 'Both online and offline']].map(([m, l]) => (
+            <button key={m} className={s.mode === m ? 'on' : ''} onClick={() => set({ mode: m })}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      {s.mode && (
+        <div className="q">
+          <b className="q-l">c. Phases in {s.name.trim() || label}</b>
+          <div className="chips">
+            {phases.filter((g) => p.courses.includes(g.course)).map((g) => {
+              const other = ownerOf[g.key] && ownerOf[g.key] !== s.id;
+              return (
+                <button key={g.key} type="button" className={`chip-btn ${s.phases.includes(g.key) ? 'on' : ''}`} disabled={other}
+                  title={other ? 'Already in another paper' : g.batches.map((b) => b.batch).join(', ')} onClick={() => set(keepBatches(s, phases, toggleIn(s.phases, g.key)))}>
+                  {p.courses.length > 1 ? `${g.course} · ` : ''}{g.phase} <small>{g.count}</small>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {s.mode && s.phases.length > 0 && (
+        <div className="q">
+          <b className="q-l">d. Batches</b>
+          <p className="muted small">Batches of the phases picked above.{s.mode === 'Both' ? ' Mark each one Online or Offline.' : ''} <button className="link" onClick={() => set({ batches: free.map((b) => b.batch) })}>Tick all</button> · <button className="link" onClick={() => set({ batches: [], online: [] })}>Clear</button></p>
+          <div className="batch-grid">
+            {pb.map((b) => {
+              const where = slotOf[b.batch];
+              const here = s.batches.includes(b.batch);
+              const elsewhere = where && where.slot !== s.id;
+              const on = here && s.online.includes(b.batch);
+              return (
+                <div key={b.batch} className={`batch ${here ? 'on' : ''} ${elsewhere ? 'other' : ''}`}>
+                  <label className="batch-top">
+                    <input type="checkbox" checked={here} onChange={() => tickBatch(b.batch)} disabled={!!elsewhere} />
+                    <span className="batch-name">{b.batch}</span>
+                    {elsewhere ? <span className="pill muted-pill">Other paper</span> : <span className="batch-count">{b.count}</span>}
+                  </label>
+                  {here && (
+                    <div className="batch-opts">
+                      {s.mode === 'Both'
+                        ? <div className="seg sm">{['Online', 'Offline'].map((m) => <button key={m} className={(on ? 'Online' : 'Offline') === m ? 'on' : ''} onClick={() => set({ online: m === 'Online' ? [...new Set([...s.online, b.batch])] : s.online.filter((x) => x !== b.batch) })}>{m}</button>)}</div>
+                        : <span className="small muted">{s.mode}</span>}
+                      {s.mode === 'Both' && <button className="link small" onClick={() => setOpen(open === b.batch ? '' : b.batch)}>Students</button>}
+                      {s.mode !== 'Offline' && <label className="small top-tick" title="Top batch students take lab seats first"><input type="checkbox" checked={top.has(b.batch)} onChange={() => toggleTop(b.batch)} /> Top</label>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {open && s.batches.includes(open) && (
+            <StudentModes batch={open} students={studentsByBatch[open] || []} batchMode={s.online.includes(open) ? 'Online' : 'Offline'}
+              studentMode={studentMode} setStudentMode={setStudentMode} close={() => setOpen('')} />
+          )}
+        </div>
+      )}
+
+      {s.batches.length > 0 && <SeatBoard s={sum} mode={s.mode} />}
+    </div>
+  );
+}
 
 function StudentModes({ batch, students, batchMode, studentMode, setStudentMode, close }) {
   const [q, setQ] = useState('');
@@ -841,20 +865,20 @@ function BigLine({ left, placed, empty, what, more }) {
     ? <div className="bigline bad"><b>{n(left)}</b> {what} students still need a seat. {more}</div>
     : <div className="bigline good">All {n(placed)} {what} students have a seat · <b>{n(empty)}</b> seats empty</div>;
 }
-const slotTitle = (p, s) => `${p.slots.length > 1 ? `Time ${p.slots.indexOf(s) + 1}: ` : ''}${slotLabel(s)} · ${s.batches.join(', ')}`;
+const slotTitle = (p, s) => `${slotName(p, s)} · ${slotLabel(s)} · ${s.batches.join(', ')}`;
 
-function LabStep({ p, idx, labsOn, order, setSlot, countSlot, takenFor, back, next }) {
+function LabStep({ p, idx, labsOn, order, setSlot, countSlot, planOf, back, next }) {
   const slots = p.slots.filter((s) => s.batches.length && countSlot(p, s).online > 0);
   const groups = {};
   for (const l of labsOn) (groups[l.building] ||= []).push(l);
   const blds = Object.keys(groups).sort((a, b) => order.indexOf(a) - order.indexOf(b));
   return (
     <section>
-      <Head kicker={`Paper ${idx + 1}: ${p.name}`} title="Which labs?" lead="Tick the computer labs for the online batches. Labs fill in the order shown, one lab completely before the next. Top batch students are seated first. Online students left without a lab seat sit offline." />
+      <Head kicker={`Test ${idx + 1}: ${p.courses.join(', ')}`} title="Which labs?" lead="Tick the computer labs for the online batches. Labs fill in the order shown, one lab completely before the next. Top batch students are seated first. Online students left without a lab seat sit offline." />
       {slots.map((s) => {
         const need = countSlot(p, s).online;
         const sel = new Set(s.labs || []);
-        const used = takenFor(p, s);
+        const used = planOf(s).taken.labs;
         const free = (l) => Math.max(0, Number(l.capacity) - (used[roomKey(l)]?.filled || 0));
         const chosen = labsOn.filter((l) => sel.has(roomKey(l))).map((l) => ({ ...l, capacity: free(l) }));
         const prev = fillPreview(need, chosen, order);
@@ -894,7 +918,7 @@ function LabStep({ p, idx, labsOn, order, setSlot, countSlot, takenFor, back, ne
         );
       })}
       <div className="ctabar">
-        <div><b>Labs</b><span className="muted">{slots.map((s) => `${slotLabel(s)}: ${(s.labs || []).length} labs`).join(' · ')}</span></div>
+        <div><b>Labs</b><span className="muted">{slots.map((s) => `${slotName(p, s)}: ${(s.labs || []).length} labs`).join(' · ')}</span></div>
         <div className="cta-row">
           <button className="btn ghost" onClick={back}>Back</button>
           <button className="btn cta" onClick={next}>Continue →</button>
@@ -904,7 +928,7 @@ function LabStep({ p, idx, labsOn, order, setSlot, countSlot, takenFor, back, ne
   );
 }
 
-function RoomStep({ p, idx, settings, setSettings, setSlot, sumSlot, roomsOn, slotRooms, onRoomFile, back, next }) {
+function RoomStep({ p, idx, settings, setSettings, setSlot, planOf, roomsOn, slotRooms, onRoomFile, adjustCap, setRoomCap, back, next }) {
   const editRoom = (kind, i, patch) => setSettings((s) => ({ ...s, [kind]: s[kind].map((r, j) => (j === i ? { ...r, ...patch } : r)) }));
   const move = (i, d) => setSettings((s) => {
     const o = s.buildingOrder.slice(); const j = i + d;
@@ -914,15 +938,19 @@ function RoomStep({ p, idx, settings, setSettings, setSlot, sumSlot, roomsOn, sl
   const toggleGirls = (b) => setSettings((s) => ({ ...s, girlsOk: { ...s.girlsOk, [b]: s.girlsOk[b] === false } }));
   const roomsIn = (b) => roomsOn.filter((r) => r.building === b);
   const buildings = settings.buildingOrder.filter((b) => roomsIn(b).length);
-  const slots = p.slots.filter((s) => s.batches.length && sumSlot(p, s).offline > 0);
+  const slots = p.slots.filter((s) => s.batches.length && planOf(s).offNeed > 0);
   return (
     <section>
-      <Head kicker={`Paper ${idx + 1}: ${p.name}`} title="Buildings and rooms" lead="Tick the buildings for the offline students. Every room of a ticked building is used; open Choose rooms to leave a room out. Buildings fill in the order set below, one room completely before the next." />
+      <Head kicker={`Test ${idx + 1}: ${p.courses.join(', ')}`} title="Buildings and rooms" lead="Tick the buildings for the offline students. Every room of a ticked building is used; open Choose rooms to leave a room out or change its capacity. Seats another paper fills at the same time are shown as used." />
       {slots.map((s) => {
-        const sum = sumSlot(p, s);
-        const rooms = slotRooms(s);
+        const pl0 = planOf(s);
+        const need = pl0.offNeed;
+        const used = pl0.taken.rooms;
+        const usedIn = (r) => used[roomKey(r)]?.filled || 0;
+        const free = (r) => Math.max(0, Number(r.capacity) - usedIn(r));
+        const rooms = slotRooms(s).map((r) => ({ ...r, capacity: free(r) }));
         const order = settings.buildingOrder.filter((b) => (s.buildings || []).includes(b));
-        const prev = fillPreview(sum.offline, rooms, order);
+        const prev = fillPreview(need, rooms, settings.buildingOrder);
         const fillOf = Object.fromEntries(prev.rooms.map((r) => [roomKey(r), r]));
         const empty = prev.rooms.reduce((a, r) => a + r.empty, 0);
         const sel = new Set(s.buildings || []);
@@ -932,36 +960,39 @@ function RoomStep({ p, idx, settings, setSettings, setSlot, sumSlot, roomsOn, sl
         return (
           <div className="card slotcard" key={s.id}>
             <h2>{slotTitle(p, s)}</h2>
-            <BigLine left={prev.left} placed={sum.offline} empty={empty} what="offline" more="Tick another building." />
-            {sum.overflow > 0 && <p className="muted small">Includes {sum.overflow} online students without a lab seat.</p>}
+            <BigLine left={prev.left} placed={need} empty={empty} what="offline" more="Tick another building." />
             <div className="bld-chips">
               {buildings.map((b) => {
-                const used = roomsIn(b).filter((r) => sel.has(b) && !off.has(roomKey(r)));
-                const seats = (sel.has(b) ? used : roomsIn(b)).reduce((a, r) => a + Number(r.capacity), 0);
-                const filled = used.reduce((a, r) => a + (fillOf[roomKey(r)]?.filled || 0), 0);
+                const all = roomsIn(b);
+                const seats = all.reduce((a, r) => a + Number(r.capacity), 0);
+                const others = all.reduce((a, r) => a + usedIn(r), 0);
+                const by = [...new Set(all.flatMap((r) => used[roomKey(r)]?.by || []))];
+                const mine = sel.has(b) ? all.filter((r) => !off.has(roomKey(r))).reduce((a, r) => a + (fillOf[roomKey(r)]?.filled || 0), 0) : 0;
                 return (
                   <label key={b} className={`bld-chip ${sel.has(b) ? 'on' : ''}`}>
                     <input type="checkbox" checked={sel.has(b)} onChange={() => toggleB(b)} />
                     <b>{sel.has(b) ? `${order.indexOf(b) + 1}. ` : ''}{b}</b>
-                    <span>{sel.has(b) ? `${filled} / ${seats} filled · ${seats - filled} empty` : `${seats} seats`}</span>
+                    <span>{seats} seats{others ? ` · ${others} used by ${by.join(', ')}` : ''}{sel.has(b) ? ` · ${mine} filled` : ''} · <b className={seats - others - mine ? 'good' : 'bad'}>{seats - others - mine} free</b></span>
                   </label>
                 );
               })}
             </div>
+            <CapacityTool buildings={buildings} roomsIn={roomsIn} adjustCap={adjustCap} />
             {sel.size > 0 && (
               <details className="fold inner">
-                <summary>Choose rooms <span className="muted">· {rooms.length} rooms in use</span></summary>
+                <summary>Choose rooms <span className="muted">· {rooms.length} rooms in use · capacity can be typed per room</span></summary>
                 {order.map((b) => (
                   <div key={b} className="room-line">
                     <b>{b}</b>
                     <div className="room-chips">
                       {roomsIn(b).map((r) => {
-                        const k = roomKey(r), f = fillOf[k], use = !off.has(k);
+                        const k = roomKey(r), f = fillOf[k], use = !off.has(k), u = usedIn(r);
                         return (
-                          <label key={k} className={`room-chip ${use ? 'on' : ''} ${f && f.filled ? 'filled' : ''}`}>
-                            <input type="checkbox" checked={use} onChange={() => toggleR(k)} />
-                            <b>{r.room}</b><span>{use && f ? `${f.filled}/${r.capacity}` : r.capacity}</span>
-                          </label>
+                          <div key={k} className={`room-chip ${use ? 'on' : ''} ${f && f.filled ? 'filled' : ''} ${u ? 'taken' : ''}`} title={u ? `${u} seats used by ${used[k].by.join(', ')}` : ''}>
+                            <label><input type="checkbox" checked={use} onChange={() => toggleR(k)} /> <b>{r.room}</b></label>
+                            <input className="cap sm" type="number" min="0" value={r.capacity} onChange={(e) => setRoomCap(k, e.target.value)} aria-label={`Capacity of ${b} ${r.room}`} />
+                            <span>{u ? `${u} used · ` : ''}{use && f ? `${f.filled} filled` : ''}</span>
+                          </div>
                         );
                       })}
                     </div>
@@ -993,13 +1024,37 @@ function RoomStep({ p, idx, settings, setSettings, setSlot, sumSlot, roomsOn, sl
         <button className="btn ghost danger" onClick={() => { if (confirm('Reset buildings, rooms, capacities, girls settings and groups to the built-in lists?')) setSettings(freshSettings()); }}>{Ico.bin}Reset to built-in lists</button>
       </details>
       <div className="ctabar">
-        <div><b>Buildings</b><span className="muted">{slots.map((s) => `${slotLabel(s)}: ${(s.buildings || []).join(', ') || 'none yet'}`).join(' · ')}</span></div>
+        <div><b>Buildings</b><span className="muted">{slots.map((s) => `${slotName(p, s)}: ${(s.buildings || []).join(', ') || 'none yet'}`).join(' · ')}</span></div>
         <div className="cta-row">
           <button className="btn ghost" onClick={back}>Back</button>
           <button className="btn cta" onClick={next}>Continue →</button>
         </div>
       </div>
     </section>
+  );
+}
+
+// Change the room capacity of one building: by a percentage, or by a number of seats shared equally between its rooms
+function CapacityTool({ buildings, roomsIn, adjustCap }) {
+  const [b, setB] = useState('');
+  const [pct, setPct] = useState('');
+  const [num, setNum] = useState('');
+  const cur = b || buildings[0] || '';
+  const list = cur ? roomsIn(cur) : [];
+  const seats = list.reduce((a, r) => a + Number(r.capacity), 0);
+  const base = list.reduce((a, r) => a + Number(r.base ?? r.capacity), 0);
+  if (!buildings.length) return null;
+  return (
+    <div className="captool">
+      <b className="small">Change capacity</b>
+      <select value={cur} onChange={(e) => setB(e.target.value)} aria-label="Building">{buildings.map((x) => <option key={x} value={x}>{x}</option>)}</select>
+      <span className="muted small">{seats} seats{seats !== base ? ` (normally ${base})` : ''}</span>
+      <label className="small">to <input className="cap sm" type="number" min="0" placeholder="80" value={pct} onChange={(e) => setPct(e.target.value)} aria-label="Percent of normal capacity" /> %</label>
+      <button className="btn ghost sm" disabled={pct === ''} onClick={() => { adjustCap(cur, 'pct', Number(pct)); setPct(''); }}>Apply %</button>
+      <label className="small">or by <input className="cap sm" type="number" placeholder="-20" value={num} onChange={(e) => setNum(e.target.value)} aria-label="Seats to add or remove" /> seats</label>
+      <button className="btn ghost sm" disabled={num === ''} onClick={() => { adjustCap(cur, 'num', Number(num)); setNum(''); }}>Apply seats</button>
+      {seats !== base && <button className="link small" onClick={() => adjustCap(cur, 'reset')}>Reset</button>}
+    </div>
   );
 }
 
@@ -1010,7 +1065,7 @@ function RulesStep({ p, idx, settings, setSettings, special, batches, choices, b
   const order = settings.seatOrder || 'mixed';
   return (
     <section>
-      <Head kicker={`Paper ${idx + 1}: ${p.name}`} title="Shuffle rules" lead="Choose how students are shuffled to stop copying. Then prepare the seating." />
+      <Head kicker={`Test ${idx + 1}: ${p.courses.join(', ')}`} title="Shuffle rules" lead="Choose how students are shuffled to stop copying. Then prepare the seating." />
       <div className="card seatorder">
         <h2>Seat order inside each room</h2>
         <label className="field"><span>Order of seats</span>
@@ -1044,7 +1099,7 @@ function RulesStep({ p, idx, settings, setSettings, special, batches, choices, b
       </details>
 
       <div className="ctabar">
-        <div><b>{special.some((x) => !x.kept) ? 'Monitoring or due fee students have no room yet' : 'Ready to prepare the seating'}</b><span className="muted">{p.name} · {batches.length} batches</span></div>
+        <div><b>{special.some((x) => !x.kept) ? 'Monitoring or due fee students have no room yet' : 'Ready to prepare the seating'}</b><span className="muted">{p.slots.map((s) => slotName(p, s)).join(', ')} · {batches.length} batches</span></div>
         <div className="cta-row">
           <button className="btn ghost" onClick={back}>Back</button>
           <button className="btn cta" onClick={prepare}>{Ico.spark}Prepare seating</button>
@@ -1073,18 +1128,39 @@ function RollUpload({ onFile }) {
   );
 }
 
+// Rooms kept for monitoring or due fee students: pick a building, then its rooms
 function PinPicker({ choices, value, onChange, label }) {
-  const keyOf = (r) => roomKey(r);
-  const picked = value.filter((k) => choices.some((r) => keyOf(r) === k));
-  const seats = choices.filter((r) => picked.includes(keyOf(r))).reduce((a, r) => a + Number(r.capacity || 0), 0);
+  const blds = [...new Set(choices.map((r) => r.building))];
+  const [b, setB] = useState('');
+  const picked = value.filter((k) => choices.some((r) => roomKey(r) === k));
+  const seats = choices.filter((r) => picked.includes(roomKey(r))).reduce((a, r) => a + Number(r.capacity || 0), 0);
+  const cur = b && blds.includes(b) ? b : blds[0];
   return (
-    <div className="pins">
-      <select value="" onChange={(e) => e.target.value && onChange([...picked, e.target.value])} aria-label={`Add a room for ${label}`}>
-        <option value="">Keep a room for {label.toLowerCase()}…</option>
-        {choices.filter((r) => !picked.includes(keyOf(r))).map((r) => <option key={keyOf(r)} value={keyOf(r)}>{r.building} · {r.kind} {r.room} · {r.capacity} seats</option>)}
-      </select>
-      {picked.map((k) => <span className="pill" key={k}>{k.replace('|', ' · ')} <button className="link" onClick={() => onChange(picked.filter((x) => x !== k))} aria-label={`Remove ${k}`}>×</button></span>)}
-      {picked.length > 0 && <span className="muted small">{seats} seats kept</span>}
+    <div className="pinpick">
+      <p className="muted small">1. Building</p>
+      <div className="chips">
+        {blds.map((x) => {
+          const n = choices.filter((r) => r.building === x && picked.includes(roomKey(r))).length;
+          return <button key={x} type="button" className={`chip-btn ${cur === x ? 'on' : ''}`} onClick={() => setB(x)}>{x}{n ? ` · ${n} picked` : ''}</button>;
+        })}
+      </div>
+      {cur && (
+        <>
+          <p className="muted small">2. Rooms in {cur} for {label.toLowerCase()} students</p>
+          <div className="room-chips">
+            {choices.filter((r) => r.building === cur).map((r) => {
+              const k = roomKey(r), on = picked.includes(k);
+              return (
+                <label key={k} className={`room-chip ${on ? 'on filled' : ''}`}>
+                  <input type="checkbox" checked={on} onChange={() => onChange(on ? picked.filter((x) => x !== k) : [...picked, k])} />
+                  <b>{r.kind === 'Lab' ? `Lab ${r.room}` : r.room}</b><span>{r.capacity}</span>
+                </label>
+              );
+            })}
+          </div>
+        </>
+      )}
+      {picked.length > 0 && <p className="small">Kept: {picked.map((k) => k.replace('|', ' · ')).join(', ')} · {seats} seats</p>}
     </div>
   );
 }
@@ -1166,15 +1242,12 @@ function ResultStep({ results, view, setView, metaFor, multi, order, reshuffle, 
       )}
       {!x.batches.length && <div className="alert warn"><span>No batches are in this paper. Add them on the Batches step.</span></div>}
       <div className="actions">
-        {multi
-          ? <><button className="btn cta" onClick={() => download(results)} disabled={!files}>{Ico.down}Download all ({files} {files === 1 ? 'file' : 'files'})</button>
-              <button className="btn primary" onClick={() => download([x])} disabled={!x.batches.length}>{Ico.down}Only {paperName(x.paper, x.index)}</button></>
-          : <button className="btn cta" onClick={() => download([x])}>{Ico.down}Download Excel</button>}
-        <button className="btn ghost" onClick={downloadBoard} disabled={!files}>{Ico.down}Notice board{multi ? ' (all papers)' : ''}</button>
+        <button className="btn cta" onClick={download} disabled={!files}>{Ico.down}Download Excel{multi ? ' (all papers, one file)' : ''}</button>
         <div className="menu">
           <button className="btn ghost" onClick={() => setMenu(!menu)} aria-expanded={menu}>More ▾</button>
           {menu && (
             <div className="menu-list" onMouseLeave={() => setMenu(false)}>
+              <button onClick={() => { setMenu(false); downloadBoard(); }}>Notice board only<small>One sheet for the building entrance</small></button>
               <button onClick={() => { setMenu(false); reshuffle(); }}>Reshuffle seats<small>Every student gets a new seat</small></button>
               <button onClick={() => { setMenu(false); back(); }}>Change buildings<small>Buildings, rooms, girls, special rooms</small></button>
               <button onClick={() => { setMenu(false); window.print(); }}>Print this page<small>The seat fill summary</small></button>
@@ -1214,7 +1287,7 @@ function ResultStep({ results, view, setView, metaFor, multi, order, reshuffle, 
           </div>
         ))}
       </details>
-      <p className="muted small">{multi ? 'Each paper file has' : 'The Excel file has'}: Raw_Data, Student_list, Seating Arrangement, {x.paper.two ? 'an attendance sheet per shift' : 'Attendance'}, SMD, Room_Layout, Master_List{result.unseated.length ? ', Not_Seated' : ''}. The notice board file puts every paper on one sheet.</p>
+      <p className="muted small">One Excel file{multi ? ' for every paper' : ''}: Raw_Data, Student_list, Seating Arrangement, Attendance (every room{multi ? ', paper' : ''} and shift), SMD, Room_Layout, Master_List{unseatedAll ? ', Not_Seated' : ''}.{multi ? ' Each sheet has a Paper column or a block per paper.' : ''}</p>
     </section>
   );
 }

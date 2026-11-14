@@ -366,3 +366,14 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -.01em; margin: 28px 0 8
 .timebox-h .iconbtn { margin-left: auto; }
 .warnt { color: #a87400; font-weight: 600; }
 .seatorder select { max-width: 320px; }
+/* round 5: papers inside a test, capacity tool, building then room picker */
+.paperbox { background: var(--card); border-width: 2px; padding: 12px 14px; margin-top: 12px; }
+.paperbox .q { margin-top: 10px; }
+.paperbox .timebox-h .field { min-width: 220px; }
+.captool { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; padding: 8px 10px; border: 1px dashed var(--line2); border-radius: 12px; }
+.captool select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+.cap.sm { width: 64px; padding: 3px 6px; font-size: 13px; }
+.room-chip label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.room-chip.taken { border-style: dashed; }
+.pinpick .chips { margin: 4px 0 6px; }
+.pinpick p { margin: 6px 0 2px; }
