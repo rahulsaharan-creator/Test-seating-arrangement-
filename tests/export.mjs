@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 import defaults from '../src/data/defaults.json' with { type: 'json' };
 import { allocate } from '../src/lib/engine.js';
 import { buildWorkbook, buildNoticeBoard } from '../src/lib/exporter.js';
+import { readSeatingFile } from '../src/lib/readers.js';
 let fails = 0; const ok = (c, m) => { console.log(`${c ? 'ok  ' : 'FAIL'} - ${m}`); if (!c) fails++; };
 const mk = (n, batch, start) => Array.from({ length: n }, (_, i) => ({ Roll_Number: String(start + i), Student_Name: `Demo ${start + i}`, Gender: i % 3 ? 'Male' : 'Female', Course: 'Demo', Batch: batch, Medium: 'Hindi' }));
 const order = ['GP', 'M1', 'M2'];
@@ -24,6 +25,10 @@ ok(p2.assigned.every((s) => !p1.assigned.some((t) => t.Building === s.Building &
 const nb = buildNoticeBoard(ExcelJS, [{ result: p1, meta: meta1 }, { result: p2, meta: meta2 }], { dateISO: '2026-11-15', dayTitle: 'Demo test' });
 let sections = 0; nb.getWorksheet('Notice_Board').eachRow((r) => { if (String(r.getCell(1).value || '').startsWith('Demo - Paper')) sections++; });
 ok(sections === 2, 'one notice board with both papers');
+// The planner's own file can be read back for the PRT online rotation
+const back = await readSeatingFile(ExcelJS, await wb.xlsx.writeBuffer());
+const wantOnline = p1.assigned.filter((s) => s.Mode === 'Online').map((s) => s.Roll_Number).sort();
+ok(back.date === '2026-11-15' && back.online.slice().sort().join() === wantOnline.join() && back.online.length > 0, `previous seating file read back: ${back.online.length} online on ${back.date}`);
 fs.mkdirSync('tests/out', { recursive: true });
 await wb.xlsx.writeFile('tests/out/demo_paper1.xlsx'); await nb.xlsx.writeFile('tests/out/demo_notice_board.xlsx');
 console.log(fails ? `${fails} FAILED` : 'All export checks passed'); process.exit(fails ? 1 : 0);

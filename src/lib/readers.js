@@ -146,3 +146,25 @@ export async function readRollList(ExcelJS, buffer) {
 
 // Roll numbers pasted as text: commas, spaces or new lines between them.
 export const parseRolls = (text) => [...new Set(String(text || '').split(/[\s,;]+/).map((v) => v.trim()).filter(Boolean))];
+
+// A previous seating file made by this planner: Student_list sheet (Roll_Number, Batch, Date, Mode).
+// Returns the test date and the roll numbers that sat online, for the PRT online rotation.
+export async function readSeatingFile(ExcelJS, buffer) {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer);
+  const ws = wb.getWorksheet('Student_list');
+  if (!ws) throw new Error('this is not a seating file made by this planner (it has no Student_list sheet)');
+  const rows = sheetRows(ws);
+  const head = (rows[0] || []).map((h) => norm(h || ''));
+  const ix = { roll: head.indexOf('rollnumber'), batch: head.indexOf('batch'), mode: head.indexOf('mode'), date: head.indexOf('date') };
+  if (ix.roll < 0 || ix.mode < 0) throw new Error('the Student_list sheet needs Roll_Number and Mode columns');
+  const online = [];
+  let total = 0, date = '';
+  for (const r of rows.slice(1)) {
+    if (!r[ix.roll]) continue;
+    total++;
+    if (/online/i.test(r[ix.mode] || '')) online.push(String(r[ix.roll]).trim());
+    if (!date && ix.date >= 0 && r[ix.date]) date = String(r[ix.date]).slice(0, 10);
+  }
+  return { date, online, total };
+}
