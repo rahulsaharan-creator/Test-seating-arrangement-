@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import defaults from './data/defaults.json';
-import { allocate, capacity, naturalCompare, isGirl, roomKey, FLAGS } from './lib/engine.js';
+import { allocate, capacity, naturalCompare, isGirl, roomKey, FLAGS, SEAT_ORDERS } from './lib/engine.js';
 import { buildWorkbook, buildNoticeBoard, fmtDateDMY, fmtTime } from './lib/exporter.js';
 import { readAdmissions, readRooms, readRollList, parseRolls } from './lib/readers.js';
 import { parsePhaseList, groupPhases, seatSummary, fillPreview } from './lib/plan.js';
@@ -35,7 +35,14 @@ function loadLast() {
 const uid = () => Math.random().toString(36).slice(2, 8);
 // A paper: name, courses, phases, mode (Online / Offline / Both) and one or more time slots.
 // A time slot: its time, its batches (online ones listed in online when the paper is Both), labs, buildings and removed rooms.
-const newSlot = (start = '09:00', end = '12:00') => ({ id: uid(), start, end, batches: [], online: [], labs: null, buildings: null, roomsOff: [] });
+const newSlot = (start = '09:00', end = '12:00') => {
+  const s2 = hhmm(mins(end) + 120);
+  return { id: uid(), start, end, two: false, s2: { start: s2, end: hhmm(mins(s2) + (mins(end) - mins(start))) }, batches: [], online: [], labs: null, buildings: null, roomsOff: [] };
+};
+// A time slot in 1 shift, or in 2 shifts with the same seating (a student keeps one seat; an attendance sheet per shift)
+const slotLabel = (s) => (s.two ? `${range(s)} and ${range(s.s2)}` : range(s));
+const slotOk = (s) => shiftOk(s) && (!s.two || (shiftOk(s.s2) && mins(s.s2.start) >= mins(s.end)));
+const unitOf = (p, s, many) => ({ id: s.id, name: many ? `${p.name} · ${slotLabel(s)}` : p.name, mode: '', two: !!s.two, s1: { start: s.start, end: s.end }, s2: s.s2 });
 const newPaper = () => ({ id: uid(), name: '', courses: [], phases: [], mode: '', slots: [newSlot()], done: false });
 function initialTest() {
   const last = loadLast();
@@ -76,7 +83,7 @@ const Ico = {
 
 // Blank Excel templates, made in the browser
 const TEMPLATES = {
-  admission: { file: 'Admission_list_template.xlsx', sheets: [['Admission list', ['Roll_Number', 'Student_Name', 'Gender', 'Course', 'Batch', 'Medium', 'Status']]] },
+  admission: { file: 'Admission_list_template.xlsx', sheets: [['Admission list', ['Roll_Number', 'Student_Name', 'Gender', 'Course', 'Batch', 'Medium', 'Status', 'Father_Name', 'Contact_Number', 'DOB']]] },
   rooms: { file: 'Room_list_template.xlsx', sheets: [['Room_Capacity', ['Building', 'Room No.', 'Seating Capacity', 'Note']], ['LAB_Capacity', ['Building', 'Lab', 'Capacity', 'Total systems']]] },
   rolls: { file: 'Roll_number_list_template.xlsx', sheets: [['Students', ['Roll_Number']]] },
 };
@@ -176,7 +183,7 @@ export default function App() {
   const sumSlot = (p, s) => seatSummary({ ...countSlot(p, s), labSeats: sumSeats(slotLabs(s)), roomSeats: sumSeats(slotRooms(s)) });
   const addUp = (list) => list.reduce((a, x) => { for (const k of Object.keys(x)) a[k] = (a[k] || 0) + x[k]; return a; }, {});
   const summaryOf = (p) => addUp(p.slots.filter((s) => s.batches.length).map((s) => sumSlot(p, s)).concat([seatSummary({})]));
-  const paperOk = (p) => !!(p.name.trim() && p.courses.length && p.phases.length && p.mode && p.slots.every(shiftOk) && p.slots.some((s) => s.batches.length));
+  const paperOk = (p) => !!(p.name.trim() && p.courses.length && p.phases.length && p.mode && p.slots.every(slotOk) && p.slots.some((s) => s.batches.length));
   const curSum = curP ? summaryOf(curP) : null;
 
   // Special students: Monitoring and Due fee from the lists on step 1, Top batch from the Top ticks
@@ -193,9 +200,34 @@ export default function App() {
   const curChoices = curP ? [...new Map(curP.slots.flatMap((s) => [...slotLabs(s).map((r) => ({ ...r, kind: 'Lab' })), ...slotRooms(s).map((r) => ({ ...r, kind: 'Room' }))]).map((r) => [roomKey(r), r])).values()] : [];
   const curKeys = new Set(curChoices.map(roomKey));
   const special = ['Monitoring', 'Due fee'].map((f) => ({ flag: f, n: flagCount(f), kept: (settings.pins[f] || []).some((k) => curKeys.has(k)) })).filter((x) => x.n);
-  // Per time slot numbers for the summary box (current paper, else the first paper)
-  const sumP = curP || papers[0];
-  const slotSums = sumP ? sumP.slots.filter((s) => s.batches.length).map((s, k, arr) => ({ label: arr.length > 1 ? range(s) : '', ...sumSlot(sumP, s) })) : [];
+  // Every time slot of every paper, grouped by time: slots that overlap share the labs and rooms
+  const allSlots = papers.flatMap((p) => p.slots.filter((x) => x.batches.length).map((x) => ({ p, s: x, w: windowOf(unitOf(p, x)) })))
+    .sort((a, b) => mins(a.w.start) - mins(b.w.start));
+  const timeGroups = [];
+  for (const x of allSlots) {
+    const g = timeGroups[timeGroups.length - 1];
+    if (g && mins(x.w.start) < mins(g.end) + GAP) { g.items.push(x); if (mins(x.w.end) > mins(g.end)) g.end = x.w.end; } else timeGroups.push({ start: x.w.start, end: x.w.end, items: [x] });
+  }
+  for (const g of timeGroups) {
+    const c = addUp(g.items.map((x) => countSlot(x.p, x.s)).concat([{ online: 0, offline: 0 }]));
+    const labs = new Map(), rooms = new Map();
+    for (const x of g.items) { for (const l of slotLabs(x.s)) labs.set(roomKey(l), l); for (const r of slotRooms(x.s)) rooms.set(roomKey(r), r); }
+    Object.assign(g, seatSummary({ ...c, labSeats: sumSeats([...labs.values()]), roomSeats: sumSeats([...rooms.values()]) }), { papers: [...new Set(g.items.map((x) => x.p.name || 'Paper'))] });
+  }
+  // Lab seats an overlapping time slot of another paper (or another time of this paper) already fills: { labKey: { filled, by } }
+  const takenFor = (p, s) => {
+    const me = windowOf(unitOf(p, s)), out = {};
+    for (const x of allSlots) {
+      if (x.s.id === s.id || !x.s.labs || !x.s.labs.length) continue;
+      if (!(mins(x.w.start) < mins(me.end) + GAP && mins(me.start) < mins(x.w.end) + GAP)) continue;
+      for (const r of fillPreview(countSlot(x.p, x.s).online, slotLabs(x.s), settings.buildingOrder).rooms) {
+        if (!r.filled) continue;
+        const k = roomKey(r);
+        out[k] = { filled: (out[k]?.filled || 0) + r.filled, by: [...new Set([...(out[k]?.by || []), x.p.name || 'another paper'])] };
+      }
+    }
+    return out;
+  };
 
   // ---------- handlers
   async function onAdmission(file) {
@@ -259,7 +291,7 @@ export default function App() {
     const units = [];
     for (const p of list) if (p.done) {
       const used = p.slots.filter((s) => s.batches.length);
-      for (const s of used) units.push({ p, s, unit: { id: s.id, name: used.length > 1 ? `${p.name} · ${range(s)}` : p.name, mode: '', two: false, s1: { start: s.start, end: s.end } } });
+      for (const s of used) units.push({ p, s, unit: unitOf(p, s, used.length > 1) });
     }
     units.sort((a, b) => mins(a.s.start) - mins(b.s.start));
     const done = [];
@@ -279,7 +311,7 @@ export default function App() {
         buildingOrder: settings.buildingOrder, girlsOk: settings.girlsOk,
         batchMode: Object.fromEntries(bs.map((b) => [b.batch, modeIn(p, s, b.batch)])),
         studentMode: p.mode === 'Both' ? studentMode : {}, flags, pins: settings.pins, cbOf,
-        seatOrder: settings.seatOrder || 'mixed', seed: newSeed + i, taken,
+        seatOrder: settings.seatOrder || 'mixed', apart: !!settings.apart, seed: newSeed + i, taken,
       };
       done.push({ paper: unit, index: i, result: allocate(st, cfg), batches: bs, students: st.length, overlapsWith: over.map((d) => d.index) });
     });
@@ -361,7 +393,7 @@ export default function App() {
           </nav>
         </div>
         {adm && step !== 'students' && (
-          <SummaryBar adm={adm} papers={papers} appearing={appearing} curP={sumP} slotSums={slotSums} special={special}
+          <SummaryBar adm={adm} papers={papers} appearing={appearing} groups={timeGroups} special={special}
             results={step === 'result' ? results : null} goRules={setupOk ? () => setStep('rules') : null} />
         )}
       </header>
@@ -409,7 +441,7 @@ export default function App() {
         )}
 
         {step === 'labs' && curP && (
-          <LabStep p={curP} idx={curIdx} labsOn={labsOn} order={settings.buildingOrder} setSlot={setSlot} countSlot={countSlot}
+          <LabStep p={curP} idx={curIdx} labsOn={labsOn} order={settings.buildingOrder} setSlot={setSlot} countSlot={countSlot} takenFor={takenFor}
             back={() => setStep('test')} next={() => setStep(offlineNeeded ? 'rooms' : 'rules')} />
         )}
 
@@ -441,7 +473,7 @@ export default function App() {
 }
 
 // Summary box at the top, always visible: each number with its own label.
-function SummaryBar({ adm, papers, appearing, curP, slotSums, special, results, goRules }) {
+function SummaryBar({ adm, papers, appearing, groups, special, results, goRules }) {
   const n = (v) => Number(v || 0).toLocaleString('en-IN');
   const Tile = ({ label, value, sub, tone = '', children }) => (
     <div className={`tile ${tone}`}><span className="tile-l">{label}</span><b className="tile-v">{value}</b>{sub && <span className="tile-s">{sub}</span>}{children}</div>
@@ -467,19 +499,17 @@ function SummaryBar({ adm, papers, appearing, curP, slotSums, special, results, 
       </div>
     );
   }
-  const lines = (kind) => slotSums.map((x) => {
-    const on = kind === 'Online';
-    const stud = on ? x.online - x.overflow : x.offline, seats = on ? x.onlineSeats : x.offlineSeats;
-    const tail = on ? (x.onlineShort ? `${n(x.onlineShort)} go offline (labs full)` : `${n(x.onlineLeft)} empty`) : (x.offlineShort ? `${n(x.offlineShort)} without a seat` : `${n(x.offlineLeft)} empty`);
-    return <span key={x.label + kind} className="tile-s">{x.label ? <b>{x.label}: </b> : null}{n(stud)} students / {n(seats)} {on ? 'lab' : 'classroom'} seats · {tail}</span>;
-  });
-  const tot = (k) => slotSums.reduce((a, x) => a + x[k], 0);
-  const onShort = tot('onlineShort'), offShort = tot('offlineShort');
   return (
     <div className="sumbox" role="status">
       <Tile label="Active students" value={n(adm.students.length)} sub={`${n(appearing)} appearing · ${pl(papers.length, 'paper')}`} />
-      {curP && curP.mode !== 'Offline' && <Tile label={`Online${curP.name ? ` · ${curP.name}` : ''}`} value={`${n(tot('online') - tot('overflow'))} students`} tone={onShort ? 'warn' : 'good'}>{slotSums.length ? lines('Online') : <span className="tile-s">no batches yet</span>}</Tile>}
-      {curP && (curP.mode !== 'Online' || tot('overflow') > 0) && <Tile label={`Offline${curP.name ? ` · ${curP.name}` : ''}`} value={`${n(tot('offline'))} students`} tone={offShort ? 'bad' : 'good'}>{slotSums.length ? lines('Offline') : <span className="tile-s">no batches yet</span>}</Tile>}
+      {!groups.length && <Tile label="Seats" value="–" sub="Tick batches to see online and offline seats" />}
+      {groups.map((g) => (
+        <Tile key={g.start} label={`${range(g)} · ${g.papers.join(', ')}`} value={`${n(g.online + g.offline - g.overflow)} students`} tone={g.offlineShort ? 'bad' : g.onlineShort ? 'warn' : 'good'}>
+          {g.online > 0 && <span className="tile-s"><b>Online:</b> {n(g.online - g.overflow)} / {n(g.onlineSeats)} lab seats · {g.onlineShort ? `${n(g.onlineShort)} go offline (labs full)` : `${n(g.onlineLeft)} free`}</span>}
+          {(g.offline > 0 || g.overflow > 0) && <span className="tile-s"><b>Offline:</b> {n(g.offline)} / {n(g.offlineSeats)} classroom seats · {g.offlineShort ? `${n(g.offlineShort)} without a seat` : `${n(g.offlineLeft)} free`}</span>}
+          {g.items.length > 1 && <span className="tile-s muted">{g.items.length} papers or times share these labs and rooms</span>}
+        </Tile>
+      ))}
       {specials}
     </div>
   );
@@ -693,13 +723,25 @@ function PaperCard({ p, i, n, setPaper, setSlot, remove, courses, phases, ownerO
       {named && p.phases.length > 0 && p.mode && (
         <div className="q">
           <b className="q-l">5. Time</b>
-          <p className="muted small">One time for online and offline. Add another time if some batches sit in another shift.</p>
-          <div className="times">
-            {p.slots.map((s, k) => (
-              <TimeRow key={s.id} label={p.slots.length > 1 ? `Time ${k + 1}` : 'Time'} value={s} onChange={(v) => setSlot(p, s.id, v)}
-                onRemove={p.slots.length > 1 ? () => setPaper(p.id, { slots: p.slots.filter((x) => x.id !== s.id) }) : null} />
-            ))}
-          </div>
+          <p className="muted small">One time for online and offline. Each time is in 1 shift, or in 2 shifts with the same seating. Add another time if other batches sit at a different time.</p>
+          {p.slots.map((s, k) => (
+            <div className="timebox" key={s.id}>
+              <div className="timebox-h">
+                <b>{p.slots.length > 1 ? `Time ${k + 1}` : 'Time'}</b>
+                <div className="seg sm" role="group" aria-label="Shifts">
+                  <button className={!s.two ? 'on' : ''} onClick={() => setSlot(p, s.id, { two: false })}>1 shift</button>
+                  <button className={s.two ? 'on' : ''} onClick={() => setSlot(p, s.id, { two: true })}>2 shifts</button>
+                </div>
+                {p.slots.length > 1 && <button type="button" className="iconbtn danger" onClick={() => setPaper(p.id, { slots: p.slots.filter((x) => x.id !== s.id) })} aria-label={`Remove time ${k + 1}`} title="Remove this time">{Ico.bin}</button>}
+              </div>
+              <div className="times">
+                <TimeRow label={s.two ? 'Shift 1' : 'Time'} value={s} onChange={(v) => setSlot(p, s.id, v)} />
+                {s.two && <TimeRow label="Shift 2" value={s.s2} onChange={(v) => setSlot(p, s.id, { s2: v })} />}
+                {s.two && mins(s.s2.start) < mins(s.end) && <p className="muted small bad">Shift 2 must start after Shift 1 ends.</p>}
+                {s.two && <p className="muted small">Both shifts use the same seating: a student keeps one seat. The Excel file has an attendance sheet for each shift.</p>}
+              </div>
+            </div>
+          ))}
           <button type="button" className="addslot sm" onClick={addTime}>{Ico.plus}Add another time</button>
         </div>
       )}
@@ -711,11 +753,11 @@ function PaperCard({ p, i, n, setPaper, setSlot, remove, courses, phases, ownerO
             <>
               <p className="muted small">Which time are you picking batches for?</p>
               <div className="seg" role="group" aria-label="Time slot">
-                {p.slots.map((s, k) => <button key={s.id} className={slot.id === s.id ? 'on' : ''} onClick={() => setPick(s.id)}>Time {k + 1}: {range(s)} · {s.batches.length}</button>)}
+                {p.slots.map((s, k) => <button key={s.id} className={slot.id === s.id ? 'on' : ''} onClick={() => setPick(s.id)}>Time {k + 1}: {slotLabel(s)} · {s.batches.length}</button>)}
               </div>
             </>
           )}
-          <p className="muted small">Tick the batches sitting at {range(slot)}.{p.mode === 'Both' ? ' Then mark each one Online or Offline.' : ''} {unplaced ? `${unplaced} batches of these phases are not placed yet.` : 'Every batch of these phases is placed.'}</p>
+          <p className="muted small">Tick the batches sitting at {slotLabel(slot)}.{p.mode === 'Both' ? ' Then mark each one Online or Offline.' : ''} {unplaced ? `${unplaced} batches of these phases are not placed yet.` : 'Every batch of these phases is placed.'}</p>
           <div className="batch-grid">
             {pb.map((b) => {
               const where = slotOf[b.batch];
@@ -799,9 +841,9 @@ function BigLine({ left, placed, empty, what, more }) {
     ? <div className="bigline bad"><b>{n(left)}</b> {what} students still need a seat. {more}</div>
     : <div className="bigline good">All {n(placed)} {what} students have a seat · <b>{n(empty)}</b> seats empty</div>;
 }
-const slotTitle = (p, s) => `${p.slots.length > 1 ? `Time ${p.slots.indexOf(s) + 1}: ` : ''}${range(s)} · ${s.batches.join(', ')}`;
+const slotTitle = (p, s) => `${p.slots.length > 1 ? `Time ${p.slots.indexOf(s) + 1}: ` : ''}${slotLabel(s)} · ${s.batches.join(', ')}`;
 
-function LabStep({ p, idx, labsOn, order, setSlot, countSlot, back, next }) {
+function LabStep({ p, idx, labsOn, order, setSlot, countSlot, takenFor, back, next }) {
   const slots = p.slots.filter((s) => s.batches.length && countSlot(p, s).online > 0);
   const groups = {};
   for (const l of labsOn) (groups[l.building] ||= []).push(l);
@@ -812,7 +854,9 @@ function LabStep({ p, idx, labsOn, order, setSlot, countSlot, back, next }) {
       {slots.map((s) => {
         const need = countSlot(p, s).online;
         const sel = new Set(s.labs || []);
-        const chosen = labsOn.filter((l) => sel.has(roomKey(l)));
+        const used = takenFor(p, s);
+        const free = (l) => Math.max(0, Number(l.capacity) - (used[roomKey(l)]?.filled || 0));
+        const chosen = labsOn.filter((l) => sel.has(roomKey(l))).map((l) => ({ ...l, capacity: free(l) }));
         const prev = fillPreview(need, chosen, order);
         const fillOf = Object.fromEntries(prev.rooms.map((r) => [roomKey(r), r]));
         const empty = prev.rooms.reduce((a, r) => a + r.empty, 0);
@@ -837,6 +881,7 @@ function LabStep({ p, idx, labsOn, order, setSlot, countSlot, back, next }) {
                           <input type="checkbox" checked={sel.has(k)} onChange={() => toggle(k)} />
                           <span className="lab-name">{l.room}</span>
                           <span className="muted small">{l.capacity} seats{l.girls === false ? ' · no girls' : ''}</span>
+                          {used[k] && <span className="small warnt">{used[k].filled} used by {used[k].by.join(', ')} at this time · {free(l)} free</span>}
                           {f && <span className={`small ${f.empty ? 'muted' : 'good'}`}>{f.filled} filled · {f.empty} empty</span>}
                         </label>
                       );
@@ -849,7 +894,7 @@ function LabStep({ p, idx, labsOn, order, setSlot, countSlot, back, next }) {
         );
       })}
       <div className="ctabar">
-        <div><b>Labs</b><span className="muted">{slots.map((s) => `${range(s)}: ${(s.labs || []).length} labs`).join(' · ')}</span></div>
+        <div><b>Labs</b><span className="muted">{slots.map((s) => `${slotLabel(s)}: ${(s.labs || []).length} labs`).join(' · ')}</span></div>
         <div className="cta-row">
           <button className="btn ghost" onClick={back}>Back</button>
           <button className="btn cta" onClick={next}>Continue →</button>
@@ -948,7 +993,7 @@ function RoomStep({ p, idx, settings, setSettings, setSlot, sumSlot, roomsOn, sl
         <button className="btn ghost danger" onClick={() => { if (confirm('Reset buildings, rooms, capacities, girls settings and groups to the built-in lists?')) setSettings(freshSettings()); }}>{Ico.bin}Reset to built-in lists</button>
       </details>
       <div className="ctabar">
-        <div><b>Buildings</b><span className="muted">{slots.map((s) => `${range(s)}: ${(s.buildings || []).join(', ') || 'none yet'}`).join(' · ')}</span></div>
+        <div><b>Buildings</b><span className="muted">{slots.map((s) => `${slotLabel(s)}: ${(s.buildings || []).join(', ') || 'none yet'}`).join(' · ')}</span></div>
         <div className="cta-row">
           <button className="btn ghost" onClick={back}>Back</button>
           <button className="btn cta" onClick={next}>Continue →</button>
@@ -968,11 +1013,13 @@ function RulesStep({ p, idx, settings, setSettings, special, batches, choices, b
       <Head kicker={`Paper ${idx + 1}: ${p.name}`} title="Shuffle rules" lead="Choose how students are shuffled to stop copying. Then prepare the seating." />
       <div className="card seatorder">
         <h2>Seat order inside each room</h2>
-        <div className="seg" role="group" aria-label="Seat order inside each room">
-          <button className={order === 'mixed' ? 'on' : ''} onClick={() => setSettings((s) => ({ ...s, seatOrder: 'mixed' }))}>Mixed batches</button>
-          <button className={order === 'roll' ? 'on' : ''} onClick={() => setSettings((s) => ({ ...s, seatOrder: 'roll' }))}>Roll number order</button>
-        </div>
-        <p className="muted small">{order === 'mixed' ? 'Students are shuffled across rooms, and two students of the same batch never sit side by side. Reshuffle on the result page gives a new mix.' : 'Students are shuffled across rooms; inside a room, seats follow roll numbers, so one batch sits together.'}</p>
+        <label className="field"><span>Order of seats</span>
+          <select value={order} onChange={(e) => setSettings((x) => ({ ...x, seatOrder: e.target.value }))} aria-label="Seat order inside each room">
+            {Object.entries(SEAT_ORDERS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        </label>
+        <p className="muted small">{order === 'mixed' ? 'Students are shuffled across rooms, and two students of the same batch never sit side by side. Reshuffle on the result page gives a new mix.' : `Students are shuffled across rooms; inside a room, seats follow ${SEAT_ORDERS[order].toLowerCase()}.`}{['father', 'dob', 'contact'].includes(order) ? ' Needs that column in the admission list; students without it come last.' : ''}</p>
+        <label className="small"><input type="checkbox" checked={!!settings.apart} onChange={(e) => setSettings((x) => ({ ...x, apart: e.target.checked }))} /> Keep brothers and sisters apart (same father's name or same contact number never side by side)</label>
       </div>
 
       {special.map((x) => (

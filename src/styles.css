@@ -341,10 +341,10 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -.01em; margin: 28px 0 8
 
 /* Summary box: labelled tiles, always visible in the sticky header */
 .sumbox { max-width: 1240px; width: calc(100% - 56px); margin: 0 auto 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; padding: 12px; background: var(--card); border: 2px solid var(--line2); border-radius: 16px; box-shadow: var(--sh); }
-.tile { display: grid; gap: 2px; padding: 10px 14px; border-radius: 12px; background: rgba(0,0,0,.025); border-left: 5px solid var(--line2); }
-.tile-l { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
-.tile-v { font-size: 26px; line-height: 1.15; color: var(--ink); }
-.tile-s { font-size: 13px; color: var(--ink2); }
+.tile { display: grid; gap: 2px; padding: 8px 12px; border-radius: 12px; background: rgba(0,0,0,.025); border-left: 5px solid var(--line2); }
+.tile-l { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.tile-v { font-size: 20px; line-height: 1.15; color: var(--ink); }
+.tile-s { font-size: 12px; color: var(--ink2); }
 .tile.good { border-left-color: var(--accent); }
 .tile.warn { border-left-color: #d99a00; background: rgba(217,154,0,.08); }
 .tile.bad { border-left-color: var(--red); background: rgba(220,53,69,.07); }
@@ -360,3 +360,9 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -.01em; margin: 28px 0 8
 .fold.inner { margin-top: 12px; }
 .room-line { margin-top: 10px; }
 .addslot.sm { margin-top: 8px; padding: 8px; font-size: 14px; }
+
+.timebox { border: 1px solid var(--line2); border-radius: 14px; padding: 10px 12px; margin-top: 10px; }
+.timebox-h { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.timebox-h .iconbtn { margin-left: auto; }
+.warnt { color: #a87400; font-weight: 600; }
+.seatorder select { max-width: 320px; }

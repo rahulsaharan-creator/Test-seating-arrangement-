@@ -178,7 +178,8 @@ export function allocate(students, config) {
   const all = [...labs, ...rooms];
   for (const room of all) {
     room.occupants.sort((a, b) => naturalCompare(a.Roll_Number, b.Roll_Number));
-    if (config.seatOrder !== 'roll') room.occupants = mixBatches(room.occupants);
+    room.occupants = orderSeats(room.occupants, config.seatOrder || 'mixed');
+    if (config.apart) room.occupants = keepRelativesApart(room.occupants);
     room.occupants.forEach((s, idx) => {
       assigned.push({ ...s, Building: room.building, 'Room No.': room.room, 'Seat No.': room.taken + idx + 1, CB: (config.cbOf || {})[s.Batch] || phaseOf(s.Batch) });
     });
@@ -186,6 +187,51 @@ export function allocate(students, config) {
 
   return { assigned, unseated, warnings, movedOffline: movedOffline.length, usedRooms: all.filter((r) => r.used > 0) };
 }
+
+// Date of birth as a sortable number: accepts 2008-05-31, 31-05-2008, 31/05/2008, 31.05.2008 and Excel dates
+export function dobKey(v) {
+  const t = String(v || '').trim();
+  let m = t.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (m) return +m[1] * 10000 + +m[2] * 100 + +m[3];
+  m = t.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+  if (m) return +m[3] * 10000 + +m[2] * 100 + +m[1];
+  const d = new Date(t);
+  return isNaN(d) ? Infinity : d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+}
+
+// Seat order inside a room (the list arrives in roll-number order)
+export const SEAT_ORDERS = {
+  mixed: 'Mixed batches', roll: 'Roll number', name: 'Student name (A to Z)', father: "Father's name (A to Z)", dob: 'Date of birth (oldest first)', contact: 'Contact number',
+};
+export function orderSeats(list, how) {
+  const by = (f) => list.slice().sort((a, b) => f(a, b) || naturalCompare(a.Roll_Number, b.Roll_Number));
+  const txt = (k) => (a, b) => String(a[k] || '~').localeCompare(String(b[k] || '~'), undefined, { sensitivity: 'base', numeric: true });
+  if (how === 'roll') return list;
+  if (how === 'name') return by(txt('Student_Name'));
+  if (how === 'father') return by(txt('Father_Name'));
+  if (how === 'contact') return by(txt('Contact_Number'));
+  if (how === 'dob') return by((a, b) => dobKey(a.DOB) - dobKey(b.DOB) || 0);
+  return mixBatches(list);
+}
+
+// Brothers and sisters (same father's name or same contact number) do not sit side by side, where it can be avoided
+const related = (a, b) => !!a && !!b && ((a.Father_Name && String(a.Father_Name).trim().toLowerCase() === String(b.Father_Name).trim().toLowerCase())
+  || (a.Contact_Number && String(a.Contact_Number).replace(/\D/g, '') === String(b.Contact_Number).replace(/\D/g, '') && String(a.Contact_Number).replace(/\D/g, '').length >= 6));
+export function keepRelativesApart(list) {
+  const out = list.slice();
+  const bad = (k) => related(out[k - 1], out[k]) || related(out[k], out[k + 1]);
+  for (let i = 1; i < out.length; i++) {
+    if (!related(out[i - 1], out[i])) continue;
+    // swap seat i with a later seat when that leaves both places without a brother or sister next door
+    for (let j = i + 1; j < out.length; j++) {
+      [out[i], out[j]] = [out[j], out[i]];
+      if (!bad(i) && !bad(j)) break;
+      [out[i], out[j]] = [out[j], out[i]];
+    }
+  }
+  return out;
+}
+export const relativeNeighbours = (list) => list.slice(1).filter((s, i) => related(list[i], s)).length;
 
 // Seat order that keeps two students of the same batch apart: take one student from each batch in turn,
 // always from the batch with the most students left (and never the batch of the seat just filled, if another is left).

@@ -38,7 +38,7 @@ export async function readAdmissions(ExcelJS, buffer) {
   for (const ws of wb.worksheets) {
     const rows = sheetRows(ws);
     // common header variants are accepted (Roll_No., Reg No, Name, ...)
-    const ALIAS = { rollnumber: ['rollnumber', 'rollno', 'roll', 'regno', 'registrationno', 'registrationnumber'], studentname: ['studentname', 'name', 'studentsname'] };
+    const ALIAS = { rollnumber: ['rollnumber', 'rollno', 'roll', 'regno', 'registrationno', 'registrationnumber'], studentname: ['studentname', 'name', 'studentsname'], fathername: ['fathername', 'fathersname', 'father', 'fatherfullname'], contactnumber: ['contactnumber', 'contact', 'contactno', 'mobile', 'mobileno', 'mobilenumber', 'phone', 'phoneno', 'phonenumber'], dob: ['dob', 'dateofbirth', 'birthdate', 'birthday'] };
     const hi = rows.findIndex((r) => r.some((v) => ALIAS.rollnumber.includes(norm(v || ''))) && r.some((v) => norm(v || '') === 'batch'));
     if (hi < 0) continue;
     const head = rows[hi].map((h) => norm(h || ''));
@@ -46,6 +46,7 @@ export async function readAdmissions(ExcelJS, buffer) {
     const ix = {
       roll: col('Roll_Number'), name: col('Student_Name'), gender: col('Gender'), course: col('Course'),
       batch: col('Batch'), medium: col('Medium'), status: col('Status'),
+      father: col('Father_Name'), contact: col('Contact_Number'), dob: col('DOB'),
     };
     const students = [];
     const seen = new Set();
@@ -60,6 +61,7 @@ export async function readAdmissions(ExcelJS, buffer) {
       students.push({
         Roll_Number: roll, Student_Name: r[ix.name] || '', Gender: r[ix.gender] || '', Course: r[ix.course] || '',
         Batch: batch.trim(), Medium: r[ix.medium] || '',
+        Father_Name: ix.father >= 0 ? r[ix.father] || '' : '', Contact_Number: ix.contact >= 0 ? r[ix.contact] || '' : '', DOB: ix.dob >= 0 ? r[ix.dob] || '' : '',
       });
     }
     return { students, duplicates, inactive, sheet: ws.name };

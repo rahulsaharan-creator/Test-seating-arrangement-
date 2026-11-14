@@ -1,5 +1,5 @@
 // Rule checks for the seating engine with made-up students. Run: node tests/engine.mjs
-import { allocate, capacity, isGirl, sameBatchNeighbours } from '../src/lib/engine.js';
+import { allocate, capacity, isGirl, sameBatchNeighbours, orderSeats, keepRelativesApart, relativeNeighbours, dobKey } from '../src/lib/engine.js';
 
 let fails = 0;
 const ok = (c, m) => { console.log(`${c ? 'ok  ' : 'FAIL'} - ${m}`); if (!c) fails++; };
@@ -128,6 +128,22 @@ const basic = (res, n) => {
   basic(mixed, 60);
   ok(sameBatchNeighbours(mixed.assigned) === 0, 'mixed: no same-batch neighbours');
   ok(sameBatchNeighbours(roll.assigned) > 0, 'roll order: same-batch neighbours exist (old behaviour kept as an option)');
+}
+
+// 9. More seat orders and brothers and sisters apart
+{
+  console.log('\n9. Seat orders by name, father, date of birth; relatives apart');
+  const st = [
+    { Roll_Number: '3', Student_Name: 'Charu', Father_Name: 'Ram', DOB: '2008-05-01', Contact_Number: '9000000001', Batch: 'A' },
+    { Roll_Number: '1', Student_Name: 'Amit', Father_Name: 'Ram', DOB: '31-12-2007', Contact_Number: '9000000001', Batch: 'A' },
+    { Roll_Number: '2', Student_Name: 'Bina', Father_Name: 'Shyam', DOB: '15/06/2008', Contact_Number: '9000000002', Batch: 'A' },
+    { Roll_Number: '4', Student_Name: 'Dev', Father_Name: 'Mohan', DOB: '2008-01-20', Contact_Number: '9000000003', Batch: 'A' },
+  ];
+  ok(orderSeats(st, 'name').map((s) => s.Student_Name).join() === 'Amit,Bina,Charu,Dev', 'by student name');
+  ok(orderSeats(st, 'father')[0].Father_Name === 'Mohan', "by father's name");
+  ok(orderSeats(st, 'dob')[0].Student_Name === 'Amit' && dobKey('31-12-2007') === 20071231, 'by date of birth, dd-mm-yyyy read correctly');
+  const byFather = orderSeats(st, 'father');
+  ok(relativeNeighbours(byFather) > 0 && relativeNeighbours(keepRelativesApart(byFather)) === 0, 'brothers and sisters moved apart');
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nAll checks passed');
