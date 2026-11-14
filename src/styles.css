@@ -377,3 +377,29 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -.01em; margin: 28px 0 8
 .room-chip.taken { border-style: dashed; }
 .pinpick .chips { margin: 4px 0 6px; }
 .pinpick p { margin: 6px 0 2px; }
+
+/* Test & papers: bigger headings, compact phases and batches, so a whole paper fits on one screen */
+.paper .paper-top b { font-size: 20px; }
+.paper .q-l { font-size: 17px; margin-bottom: 6px; }
+.paper .q { margin-top: 10px; padding-top: 10px; }
+.paper .chips { gap: 5px; }
+.paper .chips .chip-btn { padding: 3px 10px; font-size: 13px; }
+.paper .batch-grid { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 5px; }
+.paper .batch { padding: 4px 7px; border-radius: 9px; font-size: 13px; }
+.paper .batch-top { gap: 6px; }
+.paper .batch-top input { width: 14px; height: 14px; }
+.paper .batch-opts { margin-top: 3px; gap: 4px; }
+.paper .batch-opts .seg button { padding: 2px 6px; font-size: 12px; }
+.paper .seatboard { margin-top: 10px; gap: 8px; }
+.paper .sb { padding: 8px 12px; border-radius: 12px; }
+.paper .sb b { font-size: 20px; }
+.paper .q .muted.small .link { font-size: 13px; }
+.typebar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 4px 0 12px; }
+.typebar b { font-size: 17px; }
+.rpt-time { border: 1px solid var(--line2); border-radius: 12px; padding: 8px 10px; margin-top: 8px; }
+.rpt-time .rpt-batches { font-size: 13px; margin: 4px 0 0; }
+.paper .slot { padding: 4px 10px; gap: 10px; }
+.paper .slot .field { flex-direction: row; align-items: center; gap: 6px; }
+.paper .slot .field span { font-size: 12px; }
+.paper .slot .field input { padding: 4px 8px; font-size: 14px; }
+.paper .rpt-time { padding: 6px 8px; }
