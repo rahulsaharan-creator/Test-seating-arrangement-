@@ -44,7 +44,6 @@ const newSlot = (start = '09:00', end = '12:00') => {
 const slotLabel = (s) => (s.two ? `${range(s)} and ${range(s.s2)}` : range(s));
 const slotOk = (s) => shiftOk(s) && (!s.two || (shiftOk(s.s2) && mins(s.s2.start) >= mins(s.end)));
 const slotName = (p, s) => (s.name || '').trim() || `Paper ${p.slots.indexOf(s) + 1}`;
-const unitOf = (p, s) => ({ id: s.id, name: slotName(p, s), mode: '', two: !!s.two, s1: { start: s.start, end: s.end }, s2: s.s2 });
 const newPaper = () => ({ id: uid(), name: '', courses: [], slots: [newSlot()], done: false });
 function initialTest() {
   const last = loadLast();
@@ -159,7 +158,7 @@ export default function App() {
   const curIdx = papers.findIndex((p) => p.id === cur);
   // Any change to a paper means its seating must be prepared again
   const setPaper = (id, patch) => setTest((t) => ({ ...t, papers: t.papers.map((p) => (p.id === id ? { ...p, ...patch, done: false } : p)) }));
-  const setSlot = (p, sid, patch) => setPaper(p.id, { slots: p.slots.map((s) => (s.id === sid ? { ...s, ...patch } : s)) });
+  const setSlot = (p, sid, patch) => setPaper(p.id, { slots: p.slots.map((s) => (sid === '*' || s.id === sid ? { ...s, ...patch } : s)) });
 
   // Phase owner (a phase is in one paper only) and batch owner (a batch is in one time slot only)
   const ownerOf = {}, slotOf = {};
@@ -202,22 +201,35 @@ export default function App() {
   const curChoices = [...new Map([...labsOn.map((r) => ({ ...r, kind: 'Lab' })), ...roomsOn.map((r) => ({ ...r, kind: 'Room' }))].map((r) => [roomKey(r), r])).values()];
   const curKeys = new Set(curChoices.map(roomKey));
   const special = ['Monitoring', 'Due fee'].map((f) => ({ flag: f, n: flagCount(f), kept: (settings.pins[f] || []).some((k) => curKeys.has(k)) })).filter((x) => x.n);
-  // Every time slot of every paper, grouped by time: slots that overlap share the labs and rooms
-  const allSlots = papers.flatMap((p) => p.slots.filter((x) => x.batches.length).map((x) => ({ p, s: x, w: windowOf(unitOf(p, x)) })))
-    .sort((a, b) => mins(a.w.start) - mins(b.w.start));
+  // One unit per test: all its papers are seated together, in one seating, on the same labs and rooms.
+  // Tests are grouped by time: tests that overlap share the labs and rooms.
+  const allSlots = papers.map((p, i) => {
+    const used = p.slots.filter((x) => x.batches.length);
+    if (!used.length) return null;
+    const w = { start: hhmm(Math.min(...used.map((x) => mins(x.start)))), end: hhmm(Math.max(...used.map((x) => mins(x.two ? x.s2.end : x.end)))) };
+    const labs = new Map(), rooms = new Map();
+    for (const x of used) { for (const l of slotLabs(x)) labs.set(roomKey(l), l); for (const r of slotRooms(x)) rooms.set(roomKey(r), r); }
+    return {
+      p, s: used[0], used, w, name: (p.name || '').trim() || `Test ${i + 1}`,
+      c: addUp(used.map((x) => countSlot(p, x)).concat([{ online: 0, offline: 0 }])),
+      labs: [...labs.values()], rooms: [...rooms.values()],
+      labsSet: used.some((x) => x.labs && x.labs.length), roomsSet: used.some((x) => x.buildings && x.buildings.length),
+    };
+  }).filter(Boolean).sort((a, b) => mins(a.w.start) - mins(b.w.start));
   const timeGroups = [];
   for (const x of allSlots) {
     const g = timeGroups[timeGroups.length - 1];
     if (g && mins(x.w.start) < mins(g.end) + GAP) { g.items.push(x); if (mins(x.w.end) > mins(g.end)) g.end = x.w.end; } else timeGroups.push({ start: x.w.start, end: x.w.end, items: [x] });
   }
   for (const g of timeGroups) {
-    const c = addUp(g.items.map((x) => countSlot(x.p, x.s)).concat([{ online: 0, offline: 0 }]));
+    const c = addUp(g.items.map((x) => x.c).concat([{ online: 0, offline: 0 }]));
     const labs = new Map(), rooms = new Map();
-    for (const x of g.items) { for (const l of slotLabs(x.s)) labs.set(roomKey(l), l); for (const r of slotRooms(x.s)) rooms.set(roomKey(r), r); }
-    Object.assign(g, seatSummary({ ...c, labSeats: sumSeats([...labs.values()]), roomSeats: sumSeats([...rooms.values()]) }), { papers: [...new Set(g.items.map((x) => slotName(x.p, x.s)))] });
+    for (const x of g.items) { for (const l of x.labs) labs.set(roomKey(l), l); for (const r of x.rooms) rooms.set(roomKey(r), r); }
+    Object.assign(g, seatSummary({ ...c, labSeats: sumSeats([...labs.values()]), roomSeats: sumSeats([...rooms.values()]) }), { papers: g.items.flatMap((x) => x.used.map((y) => slotName(x.p, y))) });
   }
-  // Seat plan in seating order (time order, then the order on the page): a paper that overlaps an earlier one
-  // sees the lab and classroom seats the earlier one fills. plan[slotId] = { taken: { labs, rooms }, labs, rooms, offNeed }
+  // Seat plan in seating order (time order): a test that overlaps an earlier test sees the lab and classroom seats the
+  // earlier one fills. Papers of the same test never block each other's seats (they are seated together).
+  // plan[slotId] (the same for every paper of a test) = { taken: { labs, rooms }, labs, rooms, offNeed, c, roomList }
   const near = (a, b) => mins(a.start) < mins(b.end) + GAP && mins(b.start) < mins(a.end) + GAP;
   const plan = {};
   for (const x of allSlots) {
@@ -228,18 +240,18 @@ export default function App() {
       for (const kind of ['labs', 'rooms']) for (const r of plan[y.s.id][kind]) {
         if (!r.filled) continue;
         const k = roomKey(r), o = taken[kind][k];
-        taken[kind][k] = { filled: (o?.filled || 0) + r.filled, by: [...new Set([...(o?.by || []), slotName(y.p, y.s)])] };
+        taken[kind][k] = { filled: (o?.filled || 0) + r.filled, by: [...new Set([...(o?.by || []), y.name])] };
       }
     }
     const freeOf = (list, kind) => list.map((r) => ({ ...r, capacity: Math.max(0, Number(r.capacity) - (taken[kind][roomKey(r)]?.filled || 0)) }));
-    const c = countSlot(x.p, x.s);
-    const labsSet = x.s.labs && x.s.labs.length;
-    const lab = labsSet ? fillPreview(c.online, freeOf(slotLabs(x.s), 'labs'), settings.buildingOrder) : { rooms: [], left: Math.max(0, c.online - sumSeats(slotLabs(x.s))) };
+    const c = x.c;
+    const lab = x.labsSet ? fillPreview(c.online, freeOf(x.labs, 'labs'), settings.buildingOrder) : { rooms: [], left: Math.max(0, c.online - sumSeats(x.labs)) };
     const offNeed = c.offline + lab.left;
-    const room = x.s.buildings && x.s.buildings.length ? fillPreview(offNeed, freeOf(slotRooms(x.s), 'rooms'), settings.buildingOrder) : { rooms: [] };
-    plan[x.s.id] = { taken, labs: lab.rooms, rooms: room.rooms, offNeed };
+    const room = x.roomsSet ? fillPreview(offNeed, freeOf(x.rooms, 'rooms'), settings.buildingOrder) : { rooms: [] };
+    const one = { taken, labs: lab.rooms, rooms: room.rooms, offNeed, c, roomList: x.rooms };
+    for (const y of x.used) plan[y.id] = one;
   }
-  const planOf = (s) => plan[s.id] || { taken: { labs: {}, rooms: {} }, labs: [], rooms: [], offNeed: 0 };
+  const planOf = (s) => plan[s.id] || { taken: { labs: {}, rooms: {} }, labs: [], rooms: [], offNeed: 0, c: { online: 0, offline: 0 }, roomList: [] };
   // Room capacity for one building: by a percentage or by a number of seats shared equally, always from the original capacity
   const adjustCap = (b, how, v) => setSettings((st) => {
     const idx = st.rooms.map((r, i) => [r, i]).filter(([r]) => r.building === b && r.enabled);
@@ -920,10 +932,12 @@ function BigLine({ left, placed, empty, what, more }) {
     ? <div className="bigline bad"><b>{n(left)}</b> {what} students still need a seat. {more}</div>
     : <div className="bigline good">All {n(placed)} {what} students have a seat · <b>{n(empty)}</b> seats empty</div>;
 }
-const slotTitle = (p, s) => `${slotName(p, s)} · ${slotLabel(s)} · ${s.batches.join(', ')}`;
 
-function LabStep({ p, idx, labsOn, order, setSlot, countSlot, planOf, back, next, label }) {
-  const slots = p.slots.filter((s) => s.batches.length && countSlot(p, s).online > 0);
+// One card for the whole test (all its papers share one seating); a change applies to every paper of the test
+const testTitle = (p) => { const used = p.slots.filter((s) => s.batches.length); return `${used.map((s) => `${slotName(p, s)} (${slotLabel(s)})`).join(' + ')} · ${pl(used.reduce((a, s) => a + s.batches.length, 0), 'batch')}`; };
+function LabStep({ p, idx, labsOn, order, setSlot: setOne, planOf, back, next, label }) {
+  const setSlot = (pp, sid, patch) => setOne(pp, '*', patch);
+  const slots = p.slots.filter((s) => s.batches.length && planOf(s).c.online > 0).slice(0, 1);
   const groups = {};
   for (const l of labsOn) (groups[l.building] ||= []).push(l);
   const blds = Object.keys(groups).sort((a, b) => order.indexOf(a) - order.indexOf(b));
@@ -931,8 +945,8 @@ function LabStep({ p, idx, labsOn, order, setSlot, countSlot, planOf, back, next
     <section>
       <Head kicker={`Test ${idx + 1}: ${p.courses.join(', ')}`} title="Online seating: which labs?" lead="Tick the computer labs for the online batches. Labs fill in the order shown, one lab completely before the next. Top batch students are seated first. Online students left without a lab seat sit offline." />
       {slots.map((s) => {
-        const need = countSlot(p, s).online;
-        const sel = new Set(s.labs || []);
+        const need = planOf(s).c.online;
+        const sel = new Set(p.slots.flatMap((x) => x.labs || []));
         const used = planOf(s).taken.labs;
         const free = (l) => Math.max(0, Number(l.capacity) - (used[roomKey(l)]?.filled || 0));
         const chosen = labsOn.filter((l) => sel.has(roomKey(l))).map((l) => ({ ...l, capacity: free(l) }));
@@ -942,7 +956,7 @@ function LabStep({ p, idx, labsOn, order, setSlot, countSlot, planOf, back, next
         const toggle = (k) => setSlot(p, s.id, { labs: sel.has(k) ? [...sel].filter((x) => x !== k) : [...sel, k] });
         return (
           <div className="card slotcard" key={s.id}>
-            <h2>{slotTitle(p, s)}</h2>
+            <h2>{testTitle(p)}</h2>
             <BigLine left={prev.left} placed={need} empty={empty} what="online" more="Select more labs, or continue and they sit offline." />
             <p className="muted small"><button className="link" onClick={() => setSlot(p, s.id, { labs: labsOn.map(roomKey) })}>Select all labs</button> · <button className="link" onClick={() => setSlot(p, s.id, { labs: [] })}>Clear</button></p>
             {blds.map((b) => {
@@ -973,7 +987,7 @@ function LabStep({ p, idx, labsOn, order, setSlot, countSlot, planOf, back, next
         );
       })}
       <div className="ctabar">
-        <div><b>Labs</b><span className="muted">{slots.map((s) => `${slotName(p, s)}: ${(s.labs || []).length} labs`).join(' · ')}</span></div>
+        <div><b>Labs</b><span className="muted">{`${new Set(p.slots.flatMap((x) => x.labs || [])).size} labs for all papers of this test`}</span></div>
         <div className="cta-row">
           <button className="btn ghost" onClick={back}>Back</button>
           <button className="btn cta" onClick={next}>{label || 'Continue'} →</button>
@@ -983,7 +997,8 @@ function LabStep({ p, idx, labsOn, order, setSlot, countSlot, planOf, back, next
   );
 }
 
-function RoomStep({ p, idx, settings, setSettings, setSlot, planOf, roomsOn, slotRooms, onRoomFile, adjustCap, setRoomCap, back, next, label }) {
+function RoomStep({ p, idx, settings, setSettings, setSlot: setOne, planOf, roomsOn, onRoomFile, adjustCap, setRoomCap, back, next, label }) {
+  const setSlot = (pp, sid, patch) => setOne(pp, '*', patch);
   const editRoom = (kind, i, patch) => setSettings((s) => ({ ...s, [kind]: s[kind].map((r, j) => (j === i ? { ...r, ...patch } : r)) }));
   const move = (i, d) => setSettings((s) => {
     const o = s.buildingOrder.slice(); const j = i + d;
@@ -993,28 +1008,28 @@ function RoomStep({ p, idx, settings, setSettings, setSlot, planOf, roomsOn, slo
   const toggleGirls = (b) => setSettings((s) => ({ ...s, girlsOk: { ...s.girlsOk, [b]: s.girlsOk[b] === false } }));
   const roomsIn = (b) => roomsOn.filter((r) => r.building === b);
   const buildings = settings.buildingOrder.filter((b) => roomsIn(b).length);
-  const slots = p.slots.filter((s) => s.batches.length && planOf(s).offNeed > 0);
+  const slots = p.slots.filter((s) => s.batches.length && planOf(s).offNeed > 0).slice(0, 1);
   return (
     <section>
-      <Head kicker={`Test ${idx + 1}: ${p.courses.join(', ')}`} title="Offline seating: buildings and rooms" lead="Tick the buildings for the offline students. Every room of a ticked building is used; open Choose rooms to leave a room out or change its capacity. Seats another paper fills at the same time are shown as used." />
+      <Head kicker={`Test ${idx + 1}: ${p.courses.join(', ')}`} title="Offline seating: buildings and rooms" lead="Tick the buildings for the offline students. Every room of a ticked building is used; open Choose rooms to leave a room out or change its capacity. All papers of this test are seated together. Seats another test fills at the same time are shown as used." />
       {slots.map((s) => {
         const pl0 = planOf(s);
         const need = pl0.offNeed;
         const used = pl0.taken.rooms;
         const usedIn = (r) => used[roomKey(r)]?.filled || 0;
         const free = (r) => Math.max(0, Number(r.capacity) - usedIn(r));
-        const rooms = slotRooms(s).map((r) => ({ ...r, capacity: free(r) }));
-        const order = settings.buildingOrder.filter((b) => (s.buildings || []).includes(b));
+        const rooms = pl0.roomList.map((r) => ({ ...r, capacity: free(r) }));
+        const order = settings.buildingOrder.filter((b) => sel.has(b));
         const prev = fillPreview(need, rooms, settings.buildingOrder);
         const fillOf = Object.fromEntries(prev.rooms.map((r) => [roomKey(r), r]));
         const empty = prev.rooms.reduce((a, r) => a + r.empty, 0);
-        const sel = new Set(s.buildings || []);
+        const sel = new Set(p.slots.flatMap((x) => x.buildings || []));
         const off = new Set(s.roomsOff);
         const toggleB = (b) => setSlot(p, s.id, { buildings: sel.has(b) ? [...sel].filter((x) => x !== b) : [...sel, b] });
         const toggleR = (k) => setSlot(p, s.id, { roomsOff: off.has(k) ? s.roomsOff.filter((x) => x !== k) : [...s.roomsOff, k] });
         return (
           <div className="card slotcard" key={s.id}>
-            <h2>{slotTitle(p, s)}</h2>
+            <h2>{testTitle(p)}</h2>
             <BigLine left={prev.left} placed={need} empty={empty} what="offline" more="Tick another building." />
             <div className="bld-chips">
               {buildings.map((b) => {
@@ -1079,7 +1094,7 @@ function RoomStep({ p, idx, settings, setSettings, setSlot, planOf, roomsOn, slo
         <button className="btn ghost danger" onClick={() => { if (confirm('Reset buildings, rooms, capacities, girls settings and groups to the built-in lists?')) setSettings(freshSettings()); }}>{Ico.bin}Reset to built-in lists</button>
       </details>
       <div className="ctabar">
-        <div><b>Buildings</b><span className="muted">{slots.map((s) => `${slotName(p, s)}: ${(s.buildings || []).join(', ') || 'none yet'}`).join(' · ')}</span></div>
+        <div><b>Buildings</b><span className="muted">{`All papers: ${[...new Set(p.slots.flatMap((x) => x.buildings || []))].join(', ') || 'none yet'}`}</span></div>
         <div className="cta-row">
           <button className="btn ghost" onClick={back}>Back</button>
           <button className="btn cta" onClick={next}>{label || 'Continue'} →</button>
