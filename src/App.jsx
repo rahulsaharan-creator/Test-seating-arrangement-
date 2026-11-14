@@ -171,7 +171,7 @@ export default function App() {
   const curIdx = papers.findIndex((p) => p.id === cur);
   // Any change to a paper means its seating must be prepared again
   const setPaper = (id, patch) => setTest((t) => ({ ...t, papers: t.papers.map((p) => (p.id === id ? { ...p, ...patch, done: false } : p)) }));
-  const setSlot = (p, sid, patch) => setPaper(p.id, { slots: p.slots.map((s) => (sid === '*' || s.id === sid ? { ...s, ...patch } : s)) });
+  const setSlot = (p, sid, patch) => setPaper(p.id, { slots: p.slots.map((s) => (sid === '*' || s.id === sid || (Array.isArray(sid) && sid.includes(s.id)) ? { ...s, ...patch } : s)) });
 
   // Phase owner (a phase is in one paper only) and batch owner (a batch is in one time slot only)
   const ownerOf = {}, slotOf = {};
@@ -259,7 +259,7 @@ export default function App() {
     const lab = x.labsSet ? fillPreview(c.online, freeOf(x.labs, 'labs'), settings.buildingOrder) : { rooms: [], left: Math.max(0, c.online - sumSeats(x.labs)) };
     const offNeed = c.offline + lab.left;
     const room = x.roomsSet ? fillPreview(offNeed, freeOf(x.rooms, 'rooms'), settings.buildingOrder) : { rooms: [] };
-    const one = { taken, labs: lab.rooms, rooms: room.rooms, offNeed, c, roomList: x.rooms, first: x.s.id, title: `${x.used.map((y) => `${slotName(x.p, y)} (${slotLabel(y)})`).join(' + ')} · ${pl(x.used.reduce((a, y) => a + y.batches.length, 0), 'batch')}` };
+    const one = { taken, labs: lab.rooms, rooms: room.rooms, offNeed, c, roomList: x.rooms, first: x.s.id, ids: x.used.map((y) => y.id), title: `${x.used.map((y) => `${slotName(x.p, y)} (${slotLabel(y)})`).join(' + ')} · ${pl(x.used.reduce((a, y) => a + y.batches.length, 0), 'batch')}` };
     for (const y of x.used) plan[y.id] = one;
   }
   const planOf = (s) => plan[s.id] || { taken: { labs: {}, rooms: {} }, labs: [], rooms: [], offNeed: 0, c: { online: 0, offline: 0 }, roomList: [] };
@@ -328,9 +328,8 @@ export default function App() {
   // "Create seating for this test": labs and buildings are picked automatically (in fill order, just enough seats for
   // every online and offline student of all its papers, after seats used by an overlapping test), then the seating is
   // prepared at once. The operator can change labs or buildings afterwards on the Online / Offline seating steps.
-  function autoPick(p) {
-    const used = p.slots.filter((s) => s.batches.length);
-    const gc = timeGroupsOf(p).map((g) => addUp(g.map((s) => countSlot(p, s)).concat([{ online: 0, offline: 0 }])));
+  function autoPick(p, used) {
+    const gc = [addUp(used.map((s) => countSlot(p, s)).concat([{ online: 0, offline: 0 }]))];
     const c = { online: Math.max(0, ...gc.map((x) => x.online)) };
     const taken = { labs: {}, rooms: {} };
     for (const s of used) for (const kind of ['labs', 'rooms']) for (const [k, v] of Object.entries(planOf(s).taken[kind])) taken[kind][k] = Math.max(taken[kind][k] || 0, v.filled);
@@ -354,9 +353,15 @@ export default function App() {
     return { labs, buildings };
   }
   function startPaper(p) {
-    const unset = (s) => !(s.labs && s.labs.length) && !(s.buildings && s.buildings.length);
-    const pick = p.slots.some((s) => s.batches.length && unset(s)) ? autoPick(p) : null;
-    const np = { ...p, done: true, slots: p.slots.map((s) => (pick && unset(s) ? { ...s, labs: pick.labs, buildings: pick.buildings, roomsOff: [] } : { ...s, labs: s.labs || [], buildings: s.buildings || [] })) };
+    const patch = {};
+    for (const g of timeGroupsOf(p)) {
+      const labs = [...new Set(g.flatMap((s) => s.labs || []))], buildings = [...new Set(g.flatMap((s) => s.buildings || []))];
+      const online = g.reduce((a, s) => a + countSlot(p, s).online, 0);
+      const pick = (online && !labs.length) || !buildings.length ? autoPick(p, g) : null;
+      const sel = { labs: online && !labs.length ? pick.labs : labs, buildings: buildings.length ? buildings : pick.buildings };
+      for (const s of g) patch[s.id] = sel;
+    }
+    const np = { ...p, done: true, slots: p.slots.map((s) => (patch[s.id] ? { ...s, ...patch[s.id] } : { ...s, labs: s.labs || [], buildings: s.buildings || [] })) };
     const list = test.papers.map((x) => (x.id === p.id ? np : x));
     setCur(p.id);
     setTest((t) => ({ ...t, papers: list }));
@@ -946,7 +951,7 @@ function BigLine({ left, placed, empty, what, more }) {
 
 // One card for the whole test (all its papers share one seating); a change applies to every paper of the test
 function LabStep({ p, idx, labsOn, order, setSlot: setOne, planOf, back, next, label }) {
-  const setSlot = (pp, sid, patch) => setOne(pp, '*', patch);
+  const setSlot = (pp, sid, patch) => setOne(pp, planOf({ id: sid }).ids || [sid], patch);
   const slots = p.slots.filter((s) => s.batches.length && planOf(s).first === s.id && planOf(s).c.online > 0);
   const groups = {};
   for (const l of labsOn) (groups[l.building] ||= []).push(l);
@@ -956,7 +961,7 @@ function LabStep({ p, idx, labsOn, order, setSlot: setOne, planOf, back, next, l
       <Head kicker={`Test ${idx + 1}: ${p.courses.join(', ')}`} title="Online seating: which labs?" lead="Tick the computer labs for the online batches. Labs fill in the order shown, one lab completely before the next. Top batch students are seated first. Online students left without a lab seat sit offline." />
       {slots.map((s) => {
         const need = planOf(s).c.online;
-        const sel = new Set(p.slots.flatMap((x) => x.labs || []));
+        const sel = new Set(p.slots.filter((x) => (planOf(s).ids || []).includes(x.id)).flatMap((x) => x.labs || []));
         const used = planOf(s).taken.labs;
         const free = (l) => Math.max(0, Number(l.capacity) - (used[roomKey(l)]?.filled || 0));
         const chosen = labsOn.filter((l) => sel.has(roomKey(l))).map((l) => ({ ...l, capacity: free(l) }));
@@ -1008,7 +1013,7 @@ function LabStep({ p, idx, labsOn, order, setSlot: setOne, planOf, back, next, l
 }
 
 function RoomStep({ p, idx, settings, setSettings, setSlot: setOne, planOf, roomsOn, onRoomFile, adjustCap, setRoomCap, back, next, label }) {
-  const setSlot = (pp, sid, patch) => setOne(pp, '*', patch);
+  const setSlot = (pp, sid, patch) => setOne(pp, planOf({ id: sid }).ids || [sid], patch);
   const editRoom = (kind, i, patch) => setSettings((s) => ({ ...s, [kind]: s[kind].map((r, j) => (j === i ? { ...r, ...patch } : r)) }));
   const move = (i, d) => setSettings((s) => {
     const o = s.buildingOrder.slice(); const j = i + d;
@@ -1033,7 +1038,7 @@ function RoomStep({ p, idx, settings, setSettings, setSlot: setOne, planOf, room
         const prev = fillPreview(need, rooms, settings.buildingOrder);
         const fillOf = Object.fromEntries(prev.rooms.map((r) => [roomKey(r), r]));
         const empty = prev.rooms.reduce((a, r) => a + r.empty, 0);
-        const sel = new Set(p.slots.flatMap((x) => x.buildings || []));
+        const sel = new Set(p.slots.filter((x) => (planOf(s).ids || []).includes(x.id)).flatMap((x) => x.buildings || []));
         const off = new Set(s.roomsOff);
         const toggleB = (b) => setSlot(p, s.id, { buildings: sel.has(b) ? [...sel].filter((x) => x !== b) : [...sel, b] });
         const toggleR = (k) => setSlot(p, s.id, { roomsOff: off.has(k) ? s.roomsOff.filter((x) => x !== k) : [...s.roomsOff, k] });
