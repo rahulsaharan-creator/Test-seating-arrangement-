@@ -300,3 +300,41 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -.01em; margin: 28px 0 8
 .slot.online .shift-l { color: var(--accent); }
 .seatorder { margin-top: 18px; }
 .seatorder .seg { margin: 8px 0 6px; }
+
+/* Guided paper card, seat boards, labs and rooms pickers */
+.q { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line2); }
+.q-l { display: block; margin-bottom: 8px; color: var(--ink); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip-btn { border: 1px solid var(--line2); background: var(--card); color: var(--ink); border-radius: 999px; padding: 7px 14px; cursor: pointer; font: inherit; }
+.chip-btn small { opacity: .7; margin-left: 4px; }
+.chip-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip-btn:disabled { opacity: .35; cursor: not-allowed; }
+.times { margin-top: 10px; display: grid; gap: 8px; }
+.seatboard { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 18px; }
+.sb { border-radius: 16px; padding: 14px 18px; border: 2px solid var(--line2); display: grid; gap: 2px; }
+.sb span { font-weight: 600; color: var(--ink2); }
+.sb b { font-size: 26px; color: var(--ink); }
+.sb.good { border-color: var(--accent); background: rgba(3,180,110,.08); }
+.sb.warn { border-color: #d99a00; background: rgba(217,154,0,.10); }
+.sb.bad { border-color: var(--red); background: rgba(220,53,69,.08); }
+.paper-cta { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 16px; }
+.bigline { font-size: 18px; padding: 14px 18px; border-radius: 14px; margin: 14px 0; border: 2px solid; }
+.bigline b { font-size: 22px; }
+.bigline.good { border-color: var(--accent); background: rgba(3,180,110,.08); color: var(--ink); }
+.bigline.bad { border-color: var(--red); background: rgba(220,53,69,.08); color: var(--ink); }
+.lab-b { margin-top: 12px; }
+.lab-b.off { opacity: .6; }
+.lab-bh { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.lab-bh .far { margin-left: auto; }
+.lab-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; margin-top: 10px; }
+.lab-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 10px 12px; border: 1px solid var(--line2); border-radius: 12px; cursor: pointer; }
+.lab-row.on { border-color: var(--accent); background: rgba(3,180,110,.06); }
+.lab-name { font-weight: 700; }
+.room-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.room-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--line2); border-radius: 10px; font-size: 13px; cursor: pointer; opacity: .55; }
+.room-chip.on { opacity: 1; }
+.room-chip.filled { border-color: var(--accent); background: rgba(3,180,110,.07); }
+.special.need { border: 2px solid var(--red); }
+.good { color: var(--accent); }
+.sumbar .link { font-size: inherit; }
+.sumbar .warnb, .sumbar .warnb b { color: #b07d00; }
