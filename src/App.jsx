@@ -1177,11 +1177,11 @@ function RoomStep({ p, idx, settings, setSettings, setSlot: setOne, planOf, room
         const usedIn = (r) => used[roomKey(r)]?.filled || 0;
         const free = (r) => Math.max(0, Number(r.capacity) - usedIn(r));
         const rooms = pl0.roomList.map((r) => ({ ...r, capacity: free(r) }));
-        const order = settings.buildingOrder.filter((b) => sel.has(b));
         const prev = fillPreview(need, rooms, settings.buildingOrder);
         const fillOf = Object.fromEntries(prev.rooms.map((r) => [roomKey(r), r]));
         const empty = prev.rooms.reduce((a, r) => a + r.empty, 0);
         const sel = new Set(p.slots.filter((x) => (planOf(s).ids || []).includes(x.id)).flatMap((x) => x.buildings || []));
+        const order = settings.buildingOrder.filter((b) => sel.has(b));
         const off = new Set(s.roomsOff);
         const toggleB = (b) => setSlot(p, s.id, { buildings: sel.has(b) ? [...sel].filter((x) => x !== b) : [...sel, b] });
         const toggleR = (k) => setSlot(p, s.id, { roomsOff: off.has(k) ? s.roomsOff.filter((x) => x !== k) : [...s.roomsOff, k] });
