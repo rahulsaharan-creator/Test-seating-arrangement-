@@ -56,12 +56,12 @@ const pl = (n, w) => `${n.toLocaleString('en-IN')} ${w}${n === 1 ? '' : /(ch|sh|
 const mins = (t) => { const [h, m] = String(t || '0:0').split(':').map(Number); return h * 60 + m; };
 const hhmm = (m) => `${String(Math.floor(Math.min(m, 1439) / 60)).padStart(2, '0')}:${String(Math.min(m, 1439) % 60).padStart(2, '0')}`;
 // A paper's shifts. Two shifts: the same students and the same seats, an attendance sheet for each shift.
-const shiftsOf = (p) => (p.two ? [{ label: 'Shift 1', ...p.s1 }, { label: 'Shift 2', ...p.s2 }] : [{ label: '', ...p.s1 }]);
+const shiftsOf = (p) => (p.shifts ? p.shifts : p.two ? [{ label: 'Shift 1', ...p.s1 }, { label: 'Shift 2', ...p.s2 }] : [{ label: '', ...p.s1 }]);
 // Online time of a paper: online students may sit at a different time from offline students (default: same as Shift 1)
-const onlineOf = (p) => (p.mode === 'Both' && p.online && p.online.start ? p.online : p.s1);
+const onlineOf = (p) => (p.mode === 'Both' && p.online && p.online.start ? p.online : p.s1 || shiftsOf(p)[0]);
 const windowOf = (p) => {
   const sh = shiftsOf(p), on = onlineOf(p);
-  return { start: hhmm(Math.min(mins(sh[0].start), mins(on.start))), end: hhmm(Math.max(mins(sh[sh.length - 1].end), mins(on.end))) };
+  return { start: hhmm(Math.min(...sh.map((x) => mins(x.start)), mins(on.start))), end: hhmm(Math.max(...sh.map((x) => mins(x.end)), mins(on.end))) };
 };
 export const overlaps = (a, b) => {
   if (a.id === b.id) return true;
@@ -108,8 +108,8 @@ function saveBlob(blob, name) {
 const STEPS = [
   { id: 'students', label: 'Admission list' },
   { id: 'test', label: 'Test & papers' },
-  { id: 'labs', label: 'Labs' },
-  { id: 'rooms', label: 'Buildings & rooms' },
+  { id: 'labs', label: 'Online seating' },
+  { id: 'rooms', label: 'Offline seating' },
   { id: 'rules', label: 'Shuffle rules' },
   { id: 'result', label: 'Seating' },
 ];
@@ -197,7 +197,7 @@ export default function App() {
   const appearingRolls = new Set(papers.flatMap((p) => p.slots.flatMap((s) => s.batches.flatMap((b) => (studentsByBatch[b] || []).map((x) => x.Roll_Number)))));
   const appearing = appearingRolls.size;
   const flagCount = (f) => [...appearingRolls].filter((r) => flags[r] === f).length;
-  const curChoices = curP ? [...new Map(curP.slots.flatMap((s) => [...slotLabs(s).map((r) => ({ ...r, kind: 'Lab' })), ...slotRooms(s).map((r) => ({ ...r, kind: 'Room' }))]).map((r) => [roomKey(r), r])).values()] : [];
+  const curChoices = [...new Map([...labsOn.map((r) => ({ ...r, kind: 'Lab' })), ...roomsOn.map((r) => ({ ...r, kind: 'Room' }))].map((r) => [roomKey(r), r])).values()];
   const curKeys = new Set(curChoices.map(roomKey));
   const special = ['Monitoring', 'Due fee'].map((f) => ({ flag: f, n: flagCount(f), kept: (settings.pins[f] || []).some((k) => curKeys.has(k)) })).filter((x) => x.n);
   // Every time slot of every paper, grouped by time: slots that overlap share the labs and rooms
@@ -307,39 +307,66 @@ export default function App() {
     setStep(p.slots.some((s) => countSlot(p, s).online > 0) ? 'labs' : 'rooms');
   }
 
-  // One seating per time slot of every prepared paper, in time order. A slot that overlaps an earlier one (or starts within
-  // GAP minutes of it) starts each room's seat numbers after the seats already used, so no seat is used twice at once.
+  // One seating per test: the students of all its papers are seated together (mixed by the shuffle rules), in one
+  // allocation, then shown and exported as an Online seating (labs) and an Offline seating (classrooms).
+  // A test that overlaps an earlier test (or starts within GAP minutes of it) uses the seats that test left free.
+  const shiftsOfTest = (p) => p.slots.filter((s) => s.batches.length).sort((a, b) => mins(a.start) - mins(b.start)).flatMap((s) => {
+    const n = slotName(p, s);
+    return s.two ? [{ label: `${n} shift 1`, paper: n, start: s.start, end: s.end }, { label: `${n} shift 2`, paper: n, start: s.s2.start, end: s.s2.end }] : [{ label: n, paper: n, start: s.start, end: s.end }];
+  });
   function run(newSeed, list) {
     const cbOf = {};
     for (const g of settings.cbGroups) for (const b of parseRolls(g.batches)) if (g.name.trim()) cbOf[b] = g.name.trim();
-    const units = [];
-    for (const p of list) if (p.done) {
+    const pinKeys = new Set(Object.values(settings.pins || {}).flat());
+    const units = list.filter((p) => p.done && p.slots.some((s) => s.batches.length))
+      .map((p, i) => ({ p, i, unit: { id: p.id, name: (p.name || '').trim() || `Test ${list.indexOf(p) + 1}`, mode: '', two: false, shifts: shiftsOfTest(p) } }))
+      .sort((a, b) => mins(windowOf(a.unit).start) - mins(windowOf(b.unit).start));
+    const done = [], out = [];
+    units.forEach(({ p, unit }, i) => {
       const used = p.slots.filter((s) => s.batches.length);
-      for (const s of used) units.push({ p, s, unit: unitOf(p, s) });
-    }
-    units.sort((a, b) => mins(a.s.start) - mins(b.s.start));
-    const done = [];
-    units.forEach(({ p, s, unit }, i) => {
-      const bs = s.batches.map((b) => batchMap[b]).filter(Boolean);
       const taken = {};
-      const over = done.filter((d) => overlaps(d.paper, unit));
+      const over = done.filter((d) => overlaps(d.unit, unit));
       for (const d of over) for (const room of d.result.usedRooms) {
         const k = roomKey(room);
         taken[k] = Math.max(taken[k] || 0, room.taken + room.used);
       }
-      const st = bs.flatMap((b) => studentsByBatch[b.batch] || []);
-      const labKeys = new Set(slotLabs(s).map(roomKey)), roomKeys = new Set(slotRooms(s).map(roomKey));
+      const batchMode = {}, paperOf = {}, bs = [];
+      for (const s of used) for (const b of s.batches) {
+        if (!batchMap[b]) continue;
+        bs.push(batchMap[b]); batchMode[b] = modeIn(p, s, b); paperOf[b] = s;
+      }
+      const shiftLabel = (x) => `${fmtTime(x.start)}${x.end ? ` to ${fmtTime(x.end)}` : ''}`;
+      const st = bs.flatMap((b) => (studentsByBatch[b.batch] || []).map((x) => {
+        const s = paperOf[b.batch];
+        return { ...x, Paper: slotName(p, s), _shifts: (s.two ? [s, s.s2] : [s]).map(shiftLabel) };
+      }));
+      // Labs and rooms: every one chosen for any paper of the test, plus the rooms kept for monitoring and due fee students
+      const labKeys = new Set(used.flatMap((s) => slotLabs(s).map(roomKey)));
+      const roomKeys = new Set(used.flatMap((s) => slotRooms(s).map(roomKey)));
+      const studentModeAll = used.some((s) => s.mode === 'Both') ? studentMode : {};
       const cfg = {
-        rooms: settings.rooms.map((r) => ({ ...r, enabled: roomKeys.has(roomKey(r)) })),
-        labs: settings.labs.map((l) => ({ ...l, enabled: labKeys.has(roomKey(l)) })),
+        rooms: settings.rooms.map((r) => ({ ...r, enabled: !!r.enabled && (roomKeys.has(roomKey(r)) || pinKeys.has(roomKey(r))) })),
+        labs: settings.labs.map((l) => ({ ...l, enabled: !!l.enabled && (labKeys.has(roomKey(l)) || pinKeys.has(roomKey(l))) })),
         buildingOrder: settings.buildingOrder, girlsOk: settings.girlsOk,
-        batchMode: Object.fromEntries(bs.map((b) => [b.batch, modeIn(p, s, b.batch)])),
-        studentMode: s.mode === 'Both' ? studentMode : {}, flags, pins: settings.pins, cbOf,
+        batchMode, studentMode: studentModeAll, flags, pins: settings.pins, cbOf,
         seatOrder: settings.seatOrder || 'mixed', apart: !!settings.apart, seed: newSeed + i, taken,
       };
-      done.push({ paper: unit, index: i, result: allocate(st, cfg), batches: bs, students: st.length, overlapsWith: over.map((d) => d.index) });
+      const result = allocate(st, cfg);
+      done.push({ unit, result, index: i });
+      const overNames = over.map((d) => d.unit.name);
+      for (const kind of ['Online', 'Offline']) {
+        const part = {
+          ...result,
+          assigned: result.assigned.filter((x) => (x.Mode === 'Online') === (kind === 'Online')),
+          unseated: result.unseated.filter((x) => (x.Mode === 'Online') === (kind === 'Online')),
+          usedRooms: result.usedRooms.filter((r) => r.kind === kind),
+          warnings: kind === 'Online' ? result.warnings : [],
+        };
+        if (!part.assigned.length && !part.unseated.length) continue;
+        out.push({ paper: { ...unit, id: `${unit.id}-${kind}`, name: `${unit.name} · ${kind} seating` }, kind, index: out.length, result: part, batches: [...new Set(part.assigned.concat(part.unseated).map((x) => x.Batch))].map((b) => batchMap[b]).filter(Boolean), students: part.assigned.length + part.unseated.length, overlapsWith: overNames });
+      }
     });
-    setResults(done); setSeed(newSeed); setView(0); setStep('result');
+    setResults(out); setSeed(newSeed); setView(0); setStep('result');
     try { localStorage.setItem(LAST, JSON.stringify({ title: test.title, papers: list.map((p) => ({ ...p, done: false })), top: [...top] })); } catch { /* ignore */ }
   }
   function prepare() {
@@ -355,12 +382,12 @@ export default function App() {
     const sh = shiftsOf(x.paper);
     return {
       paper: x.paper.name,
-      title: results && results.length > 1 ? `${head} - ${x.paper.name}` : head,
+      title: `${head} - ${x.paper.name}`,
       dateISO: test.date,
       shifts: sh.map((s) => s.start),
       slots: sh,
       batchesLabel: [...new Set(x.batches.map((b) => b.batch.slice(0, 2)))].sort().join(', '),
-      modeLabel: n.online && n.offline ? 'Offline + Online Test' : n.online ? 'Online Test' : 'Offline Test',
+      modeLabel: x.kind === 'Online' && n.offline ? 'Online Test (moved offline listed separately)' : n.online && n.offline ? 'Offline + Online Test' : n.online ? 'Online Test' : 'Offline Test',
     };
   };
 
@@ -513,7 +540,7 @@ function SummaryBar({ adm, papers, appearing, groups, special, results, goRules 
     const notSeated = results.reduce((a, x) => a + x.result.unseated.length, 0);
     return (
       <div className="sumbox" role="status">
-        <Tile label="Students seated" value={n(all.length)} sub={`in ${pl(results.length, 'paper')}`} />
+        <Tile label="Students seated" value={n(all.length)} sub={`in ${pl(results.length, 'seating')}`} />
         <Tile label="Online (labs)" value={n(on)} tone="good" sub="students in computer labs" />
         <Tile label="Offline (classrooms)" value={n(all.length - on)} sub={moved ? `${n(moved)} moved from online, labs full` : 'students in classrooms'} />
         <Tile label="Without a seat" value={n(notSeated)} tone={notSeated ? 'bad' : 'good'} sub={notSeated ? 'see the Not_Seated sheet' : 'everyone has a seat'} />
@@ -555,8 +582,8 @@ function Guide() {
       <ol>
         <li><i>1</i><b>Admission list</b><span>Upload the admission list (and, if any, monitoring and due fee lists).</span></li>
         <li><i>2</i><b>Test and papers</b><span>Courses, then each paper: name, shifts, online or offline, phases, batches.</span></li>
-        <li><i>3</i><b>Labs</b><span>Tick labs until every online student has a seat.</span></li>
-        <li><i>4</i><b>Buildings</b><span>Tick buildings for the offline students; leave out rooms if needed.</span></li>
+        <li><i>3</i><b>Online seating</b><span>Tick labs until every online student has a seat.</span></li>
+        <li><i>4</i><b>Offline seating</b><span>Tick buildings for the offline students; leave out rooms if needed.</span></li>
         <li><i>5</i><b>Shuffle rules</b><span>Seat order and rooms for monitoring and due fee students, then Prepare.</span></li>
       </ol>
     </div>
@@ -874,7 +901,7 @@ function LabStep({ p, idx, labsOn, order, setSlot, countSlot, planOf, back, next
   const blds = Object.keys(groups).sort((a, b) => order.indexOf(a) - order.indexOf(b));
   return (
     <section>
-      <Head kicker={`Test ${idx + 1}: ${p.courses.join(', ')}`} title="Which labs?" lead="Tick the computer labs for the online batches. Labs fill in the order shown, one lab completely before the next. Top batch students are seated first. Online students left without a lab seat sit offline." />
+      <Head kicker={`Test ${idx + 1}: ${p.courses.join(', ')}`} title="Online seating: which labs?" lead="Tick the computer labs for the online batches. Labs fill in the order shown, one lab completely before the next. Top batch students are seated first. Online students left without a lab seat sit offline." />
       {slots.map((s) => {
         const need = countSlot(p, s).online;
         const sel = new Set(s.labs || []);
@@ -941,7 +968,7 @@ function RoomStep({ p, idx, settings, setSettings, setSlot, planOf, roomsOn, slo
   const slots = p.slots.filter((s) => s.batches.length && planOf(s).offNeed > 0);
   return (
     <section>
-      <Head kicker={`Test ${idx + 1}: ${p.courses.join(', ')}`} title="Buildings and rooms" lead="Tick the buildings for the offline students. Every room of a ticked building is used; open Choose rooms to leave a room out or change its capacity. Seats another paper fills at the same time are shown as used." />
+      <Head kicker={`Test ${idx + 1}: ${p.courses.join(', ')}`} title="Offline seating: buildings and rooms" lead="Tick the buildings for the offline students. Every room of a ticked building is used; open Choose rooms to leave a room out or change its capacity. Seats another paper fills at the same time are shown as used." />
       {slots.map((s) => {
         const pl0 = planOf(s);
         const need = pl0.offNeed;
@@ -1222,7 +1249,7 @@ function ResultStep({ results, view, setView, metaFor, multi, order, reshuffle, 
   const files = results.filter((y) => y.batches.length).length;
   return (
     <section>
-      <Head kicker={multi ? `Seating ready · ${pl(results.length, 'paper')}` : 'Seating ready'} title={meta.title}
+      <Head kicker={multi ? `Seating ready · ${pl(results.length, 'seating')}` : 'Seating ready'} title={meta.title}
         lead={`${fmtDateDMY(meta.dateISO)} · ${paperTime(x.paper)} · ${meta.modeLabel}${meta.batchesLabel ? ` · Batches ${meta.batchesLabel}` : ''}`} />
       {multi && (
         <div className="slottabs" role="tablist">
@@ -1238,7 +1265,7 @@ function ResultStep({ results, view, setView, metaFor, multi, order, reshuffle, 
         <div className="alert bad"><span><b>{unseatedAll} students have no seat{multi ? ' across the papers' : ''}.</b> They are listed in the Not_Seated sheet with the reason.</span><button className="btn sm" onClick={back}>Fix buildings</button></div>
       )}
       {x.overlapsWith.length > 0 && (
-        <div className="alert info"><span>This paper overlaps {x.overlapsWith.map((j) => paperName(results[j].paper, j)).join(', ')} (or starts less than {GAP} minutes after it). It uses the seats left free in shared rooms, so no seat is used twice at once.</span></div>
+        <div className="alert info"><span>This test overlaps {x.overlapsWith.join(', ')} (or starts less than {GAP} minutes after it). It uses the seats left free in shared rooms, so no seat is used twice at once.</span></div>
       )}
       {!x.batches.length && <div className="alert warn"><span>No batches are in this paper. Add them on the Batches step.</span></div>}
       <div className="actions">
@@ -1266,7 +1293,7 @@ function ResultStep({ results, view, setView, metaFor, multi, order, reshuffle, 
 
       <details className="fold" open>
         <summary>Rooms <span className="muted">· {result.usedRooms.length} used</span></summary>
-        <p className="muted small">Green: students of this {multi ? 'paper' : 'test'}. Amber: monitoring, due fee or top batch students.{x.overlapsWith.length ? ' Grey: seats used by an overlapping paper.' : ''}</p>
+        <p className="muted small">Green: students of this test (all its papers). Amber: monitoring, due fee or top batch students.{x.overlapsWith.length ? ' Grey: seats used by an overlapping test.' : ''}</p>
         {Object.entries(byBuilding).map(([b, rooms]) => (
           <div className="rbldg" key={b}>
             <div className="rb-head"><b>{b}</b><span className="muted">{pl(rooms.reduce((a, r) => a + r.used, 0), 'student')} · {pl(rooms.length, 'room')}</span></div>

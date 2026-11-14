@@ -91,6 +91,10 @@ export function allocate(students, config) {
   const modeOf = (s) => (config.studentMode || {})[s.Roll_Number] || (config.batchMode || {})[s.Batch] || 'Offline';
   const flagOf = (s) => (config.flags || {})[s.Roll_Number] || '';
   const list = students.map((s) => ({ ...s, Flag: flagOf(s) }));
+  // Seat order other than "mixed" (roll number, name, father's name...) runs across all rooms: rooms fill in that order.
+  // "Mixed" shuffles everyone together. Sorting starts from roll order so ties stay stable.
+  const how = config.seatOrder || 'mixed';
+  const arrange = (arr) => (how === 'mixed' ? shuffle(arr, rng) : orderSeats(arr.slice().sort((a, b) => naturalCompare(a.Roll_Number, b.Roll_Number)), how));
 
   /**
    * Fill rooms in order, one completely before the next, keeping enough girls-allowed seats for the girls.
@@ -146,7 +150,7 @@ export function allocate(students, config) {
       if (!own.length) continue;
       const group = people.filter((s) => s.Flag === flag);
       if (!group.length) continue;
-      const left = fill(shuffle(group, rng), own);
+      const left = fill(arrange(group), own);
       const placed = new Set(group.filter((s) => !left.includes(s)));
       people = people.filter((s) => !placed.has(s));
       if (left.length) warnings.push(`${flag}: ${left.length} ${kind.toLowerCase()} students did not fit in the rooms kept for them and were seated with everyone else.`);
@@ -160,8 +164,8 @@ export function allocate(students, config) {
       .map(({ r }) => r);
     // Online first: top batch students take lab seats before everyone else.
     const queue = kind === 'Online'
-      ? [...shuffle(people.filter((s) => s.Flag === 'Top batch'), rng), ...shuffle(people.filter((s) => s.Flag !== 'Top batch'), rng)]
-      : shuffle(people, rng);
+      ? [...arrange(people.filter((s) => s.Flag === 'Top batch')), ...arrange(people.filter((s) => s.Flag !== 'Top batch'))]
+      : arrange(people);
     const left = fill(queue, ordered);
     if (left.length && kind === 'Online') {
       movedOffline = left.map((s) => ({ ...s, Moved: 'Labs full' }));
@@ -178,7 +182,7 @@ export function allocate(students, config) {
   const all = [...labs, ...rooms];
   for (const room of all) {
     room.occupants.sort((a, b) => naturalCompare(a.Roll_Number, b.Roll_Number));
-    room.occupants = orderSeats(room.occupants, config.seatOrder || 'mixed');
+    room.occupants = orderSeats(room.occupants, how);
     if (config.apart) room.occupants = keepRelativesApart(room.occupants);
     room.occupants.forEach((s, idx) => {
       assigned.push({ ...s, Building: room.building, 'Room No.': room.room, 'Seat No.': room.taken + idx + 1, CB: (config.cbOf || {})[s.Batch] || phaseOf(s.Batch) });

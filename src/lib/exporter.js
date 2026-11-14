@@ -65,8 +65,8 @@ export function buildWorkbookAll(ExcelJS, items, day) {
   }));
   const dateISO = day.dateISO || items[0]?.meta.dateISO;
   const dateVal = (() => { const { y, m, d } = parseDate(dateISO); return new Date(Date.UTC(y, m - 1, d)); })();
-  const shiftCols = Array.from({ length: Math.max(2, ...P.map((p) => p.shiftLabels.length)) }, (_, i) => `Shift ${i + 1}`);
-  const paperCol = many ? ['Paper'] : [];
+  const shiftCols = Array.from({ length: Math.max(2, ...P.flatMap((p) => p.rows.map((x) => (x._shifts || p.shiftLabels).length))) }, (_, i) => `Shift ${i + 1}`);
+  const paperCol = many || P.some((p) => p.rows.some((x) => x.Paper)) ? ['Paper'] : [];
   const head = (ws, row, labels, opts = { bold: true, size: 11, color: C.green, bg: C.headFill, border: med }) => labels.forEach((h, i) => { const c = ws.getCell(row, i + 1); c.value = h; style(c, opts); });
 
   // ---------- Raw_Data
@@ -91,8 +91,8 @@ export function buildWorkbookAll(ExcelJS, items, day) {
     const all = P.flatMap((p) => p.rows.map((r) => ({ r, p }))).sort((a, b) => naturalCompare(a.r.Roll_Number, b.r.Roll_Number));
     for (const { r, p } of all) {
       ws.addRow({
-        ...r, Roll_Number: asNum(r.Roll_Number), Date: dateVal, Paper: p.name,
-        ...Object.fromEntries(shiftCols.map((c, i) => [c, p.shiftLabels[i] || ''])), 'Room No.': roomVal(r['Room No.']),
+        ...r, Roll_Number: asNum(r.Roll_Number), Date: dateVal, Paper: r.Paper || p.name,
+        ...Object.fromEntries(shiftCols.map((c, i) => [c, (r._shifts || p.shiftLabels)[i] || ''])), 'Room No.': roomVal(r['Room No.']),
       });
     }
     ws.getColumn('Date').numFmt = 'dd-mm-yyyy';
@@ -135,9 +135,11 @@ export function buildWorkbookAll(ExcelJS, items, day) {
     const ws = wb.addWorksheet('Attendance');
     ws.columns = [{ width: 12.7 }, { width: 34.6 }, { width: 9.1 }, { width: 43.9 }];
     let r = 1;
-    for (const p of P) p.shiftLabels.forEach((shift) => {
+    for (const p of P) p.shiftLabels.forEach((shift, si) => {
+      const only = (p.meta.slots || [])[si]?.paper;
       for (const room of p.rooms) {
-        const occ = inRoom(p.rows, room).sort((a, b) => a['Seat No.'] - b['Seat No.']);
+        const occ = inRoom(p.rows, room).filter((s) => !only || s.Paper === only).sort((a, b) => a['Seat No.'] - b['Seat No.']);
+        if (only && !occ.length) continue;
         titleRow(ws, r++, `${many ? `${p.name}  |  ` : ''}${room.building}  |  Room ${room.room}  |  ${fmtDateLong(dateISO)}  |  ${shift}  (${occ.length} students)`, 4,
           { bold: true, size: 12, color: C.navy, bg: C.titleFill });
         head(ws, r++, ['Reg. No.', 'Student Name', 'Seat No.', `Signature (${shift})`], { bold: true, size: 11, color: C.green, bg: C.headFill });
