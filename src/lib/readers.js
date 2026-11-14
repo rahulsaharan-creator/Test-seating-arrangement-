@@ -42,7 +42,10 @@ export async function readAdmissions(ExcelJS, buffer) {
     const hi = rows.findIndex((r) => r.some((v) => ALIAS.rollnumber.includes(norm(v || ''))) && r.some((v) => norm(v || '') === 'batch'));
     if (hi < 0) continue;
     const head = rows[hi].map((h) => norm(h || ''));
-    const col = (name) => { const k = norm(name); for (const a of ALIAS[k] || [k]) { const i = head.indexOf(a); if (i >= 0) return i; } return -1; };
+    // Exact header first; then a looser match for headers like "Name of Student", "Father's Full Name", "Mobile No. (Parent)"
+    const LOOSE = { studentname: (h) => h.includes('name') && !/father|mother|parent|guardian|course|batch|school|centre|center/.test(h), fathername: (h) => h.includes('father'),
+      contactnumber: (h) => /mobile|contact|phone/.test(h), dob: (h) => h.includes('birth') };
+    const col = (name) => { const k = norm(name); for (const a of ALIAS[k] || [k]) { const i = head.indexOf(a); if (i >= 0) return i; } return LOOSE[k] ? head.findIndex(LOOSE[k]) : -1; };
     const ix = {
       roll: col('Roll_Number'), name: col('Student_Name'), gender: col('Gender'), course: col('Course'),
       batch: col('Batch'), medium: col('Medium'), status: col('Status'),
