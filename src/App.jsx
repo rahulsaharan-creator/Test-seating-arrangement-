@@ -44,6 +44,22 @@ const newSlot = (start = '09:00', end = '12:00') => {
 const slotLabel = (s) => (s.two ? `${range(s)} and ${range(s.s2)}` : range(s));
 const slotOk = (s) => shiftOk(s) && (!s.two || (shiftOk(s.s2) && mins(s.s2.start) >= mins(s.end)));
 const slotName = (p, s) => (s.name || '').trim() || `Paper ${p.slots.indexOf(s) + 1}`;
+// Papers of a test that sit at the same time (or less than GAP minutes apart) are seated together in one seating;
+// papers at different times each get their own seating on the same labs and rooms (seats are used again).
+const shiftsOfSlot = (s) => (s.two ? [{ start: s.start, end: s.end }, s.s2] : [{ start: s.start, end: s.end }]);
+const slotsClash = (a, b) => shiftsOfSlot(a).some((x) => shiftsOfSlot(b).some((y) => clash(x, y)));
+export function timeGroupsOf(p) {
+  const used = p.slots.filter((s) => s.batches.length).sort((a, b) => mins(a.start) - mins(b.start));
+  const out = [];
+  for (const s of used) {
+    // join every group this paper clashes with (a paper can link two groups)
+    const hit = out.filter((g) => g.some((x) => slotsClash(x, s)));
+    const merged = hit.flat().concat([s]);
+    for (const g of hit) out.splice(out.indexOf(g), 1);
+    out.push(merged);
+  }
+  return out.map((g) => g.sort((a, b) => mins(a.start) - mins(b.start))).sort((a, b) => mins(a[0].start) - mins(b[0].start));
+}
 const newPaper = () => ({ id: uid(), name: '', courses: [], slots: [newSlot()], done: false });
 function initialTest() {
   const last = loadLast();
@@ -62,11 +78,8 @@ const windowOf = (p) => {
   const sh = shiftsOf(p), on = onlineOf(p);
   return { start: hhmm(Math.min(...sh.map((x) => mins(x.start)), mins(on.start))), end: hhmm(Math.max(...sh.map((x) => mins(x.end)), mins(on.end))) };
 };
-export const overlaps = (a, b) => {
-  if (a.id === b.id) return true;
-  const x = windowOf(a), y = windowOf(b);
-  return mins(x.start) < mins(y.end) + GAP && mins(y.start) < mins(x.end) + GAP;
-};
+const clash = (x, y) => mins(x.start) < mins(y.end) + GAP && mins(y.start) < mins(x.end) + GAP;
+export const overlaps = (a, b) => a.id === b.id || shiftsOf(a).some((x) => shiftsOf(b).some((y) => clash(x, y)));
 const paperName = (p, i) => p.name || `Paper ${i + 1}`;
 const range = (s) => `${fmtTime(s.start)}${s.end ? ` to ${fmtTime(s.end)}` : ''}`;
 const shiftText = (p) => shiftsOf(p).map((s) => (s.label ? `${s.label} ${range(s)}` : range(s))).join(' · ');
@@ -149,7 +162,7 @@ export default function App() {
     for (const s of adm?.students || []) (m[s.Batch] ||= []).push(s);
     return m;
   }, [adm]);
-  const courses = useMemo(() => [...new Set(batches.map((b) => b.course))].sort(naturalCompare), [batches]);
+  const courses = useMemo(() => [...new Set(batches.map((b) => b.course).filter((c) => String(c || '').trim()))].sort(naturalCompare), [batches]);
   const phaseList = useMemo(() => parsePhaseList(settings.phaseText || ''), [settings.phaseText]);
   const phases = useMemo(() => groupPhases(batches, phaseList.phases), [batches, phaseList]);
 
@@ -203,23 +216,22 @@ export default function App() {
   const special = ['Monitoring', 'Due fee'].map((f) => ({ flag: f, n: flagCount(f), kept: (settings.pins[f] || []).some((k) => curKeys.has(k)) })).filter((x) => x.n);
   // One unit per test: all its papers are seated together, in one seating, on the same labs and rooms.
   // Tests are grouped by time: tests that overlap share the labs and rooms.
-  const allSlots = papers.map((p, i) => {
-    const used = p.slots.filter((x) => x.batches.length);
-    if (!used.length) return null;
+  const allSlots = papers.flatMap((p, i) => timeGroupsOf(p).map((used, gi, all) => {
     const w = { start: hhmm(Math.min(...used.map((x) => mins(x.start)))), end: hhmm(Math.max(...used.map((x) => mins(x.two ? x.s2.end : x.end)))) };
+    const shifts = used.flatMap(shiftsOfSlot);
     const labs = new Map(), rooms = new Map();
     for (const x of used) { for (const l of slotLabs(x)) labs.set(roomKey(l), l); for (const r of slotRooms(x)) rooms.set(roomKey(r), r); }
     return {
-      p, s: used[0], used, w, name: (p.name || '').trim() || `Test ${i + 1}`,
+      p, s: used[0], used, w, shifts, name: `${(p.name || '').trim() || `Test ${i + 1}`}${all.length > 1 ? ` · ${used.map((x) => slotName(p, x)).join(' + ')}` : ''}`,
       c: addUp(used.map((x) => countSlot(p, x)).concat([{ online: 0, offline: 0 }])),
       labs: [...labs.values()], rooms: [...rooms.values()],
       labsSet: used.some((x) => x.labs && x.labs.length), roomsSet: used.some((x) => x.buildings && x.buildings.length),
     };
-  }).filter(Boolean).sort((a, b) => mins(a.w.start) - mins(b.w.start));
+  })).sort((a, b) => mins(a.w.start) - mins(b.w.start));
   const timeGroups = [];
   for (const x of allSlots) {
     const g = timeGroups[timeGroups.length - 1];
-    if (g && mins(x.w.start) < mins(g.end) + GAP) { g.items.push(x); if (mins(x.w.end) > mins(g.end)) g.end = x.w.end; } else timeGroups.push({ start: x.w.start, end: x.w.end, items: [x] });
+    if (g && g.items.some((y) => x.shifts.some((u) => y.shifts.some((v) => clash(u, v))))) { g.items.push(x); if (mins(x.w.end) > mins(g.end)) g.end = x.w.end; } else timeGroups.push({ start: x.w.start, end: x.w.end, items: [x] });
   }
   for (const g of timeGroups) {
     const c = addUp(g.items.map((x) => x.c).concat([{ online: 0, offline: 0 }]));
@@ -230,13 +242,12 @@ export default function App() {
   // Seat plan in seating order (time order): a test that overlaps an earlier test sees the lab and classroom seats the
   // earlier one fills. Papers of the same test never block each other's seats (they are seated together).
   // plan[slotId] (the same for every paper of a test) = { taken: { labs, rooms }, labs, rooms, offNeed, c, roomList }
-  const near = (a, b) => mins(a.start) < mins(b.end) + GAP && mins(b.start) < mins(a.end) + GAP;
   const plan = {};
   for (const x of allSlots) {
     const taken = { labs: {}, rooms: {} };
     for (const y of allSlots) {
       if (y === x) break;
-      if (!near(x.w, y.w)) continue;
+      if (!x.shifts.some((a) => y.shifts.some((b) => clash(a, b)))) continue;
       for (const kind of ['labs', 'rooms']) for (const r of plan[y.s.id][kind]) {
         if (!r.filled) continue;
         const k = roomKey(r), o = taken[kind][k];
@@ -248,7 +259,7 @@ export default function App() {
     const lab = x.labsSet ? fillPreview(c.online, freeOf(x.labs, 'labs'), settings.buildingOrder) : { rooms: [], left: Math.max(0, c.online - sumSeats(x.labs)) };
     const offNeed = c.offline + lab.left;
     const room = x.roomsSet ? fillPreview(offNeed, freeOf(x.rooms, 'rooms'), settings.buildingOrder) : { rooms: [] };
-    const one = { taken, labs: lab.rooms, rooms: room.rooms, offNeed, c, roomList: x.rooms };
+    const one = { taken, labs: lab.rooms, rooms: room.rooms, offNeed, c, roomList: x.rooms, first: x.s.id, title: `${x.used.map((y) => `${slotName(x.p, y)} (${slotLabel(y)})`).join(' + ')} · ${pl(x.used.reduce((a, y) => a + y.batches.length, 0), 'batch')}` };
     for (const y of x.used) plan[y.id] = one;
   }
   const planOf = (s) => plan[s.id] || { taken: { labs: {}, rooms: {} }, labs: [], rooms: [], offNeed: 0, c: { online: 0, offline: 0 }, roomList: [] };
@@ -319,7 +330,8 @@ export default function App() {
   // prepared at once. The operator can change labs or buildings afterwards on the Online / Offline seating steps.
   function autoPick(p) {
     const used = p.slots.filter((s) => s.batches.length);
-    const c = addUp(used.map((s) => countSlot(p, s)).concat([{ online: 0, offline: 0 }]));
+    const gc = timeGroupsOf(p).map((g) => addUp(g.map((s) => countSlot(p, s)).concat([{ online: 0, offline: 0 }])));
+    const c = { online: Math.max(0, ...gc.map((x) => x.online)) };
     const taken = { labs: {}, rooms: {} };
     for (const s of used) for (const kind of ['labs', 'rooms']) for (const [k, v] of Object.entries(planOf(s).taken[kind])) taken[kind][k] = Math.max(taken[kind][k] || 0, v.filled);
     const free = (r, kind) => Math.max(0, Number(r.capacity) - (taken[kind][roomKey(r)] || 0));
@@ -331,7 +343,7 @@ export default function App() {
       if (labSeats >= c.online) break;
       if (free(l, 'labs') > 0 && !pinKeys.has(roomKey(l))) { labs.push(roomKey(l)); labSeats += free(l, 'labs'); }
     }
-    const offNeed = c.offline + Math.max(0, c.online - labSeats);
+    const offNeed = Math.max(0, ...gc.map((x) => x.offline + Math.max(0, x.online - labSeats)));
     const buildings = [];
     let roomSeats = roomsOn.filter((r) => pinKeys.has(roomKey(r))).reduce((a, r) => a + free(r, 'rooms'), 0);
     for (const b of settings.buildingOrder.filter((x) => settings.buildingsOn.includes(x))) {
@@ -354,7 +366,7 @@ export default function App() {
   // One seating per test: the students of all its papers are seated together (mixed by the shuffle rules), in one
   // allocation, then shown and exported as an Online seating (labs) and an Offline seating (classrooms).
   // A test that overlaps an earlier test (or starts within GAP minutes of it) uses the seats that test left free.
-  const shiftsOfTest = (p) => p.slots.filter((s) => s.batches.length).sort((a, b) => mins(a.start) - mins(b.start)).flatMap((s) => {
+  const shiftsOfTest = (p, slots) => slots.flatMap((s) => {
     const n = slotName(p, s);
     return s.two ? [{ label: `${n} shift 1`, paper: n, start: s.start, end: s.end }, { label: `${n} shift 2`, paper: n, start: s.s2.start, end: s.s2.end }] : [{ label: n, paper: n, start: s.start, end: s.end }];
   });
@@ -362,11 +374,10 @@ export default function App() {
     const cbOf = {};
     for (const g of settings.cbGroups) for (const b of parseRolls(g.batches)) if (g.name.trim()) cbOf[b] = g.name.trim();
     const units = list.filter((p) => p.done && p.slots.some((s) => s.batches.length))
-      .map((p, i) => ({ p, i, unit: { id: p.id, name: (p.name || '').trim() || `Test ${list.indexOf(p) + 1}`, mode: '', two: false, shifts: shiftsOfTest(p) } }))
+      .flatMap((p) => timeGroupsOf(p).map((used, gi, all) => ({ p, used, unit: { id: `${p.id}-${gi}`, name: `${(p.name || '').trim() || `Test ${list.indexOf(p) + 1}`}${all.length > 1 ? ` · ${used.map((s) => slotName(p, s)).join(' + ')}` : ''}`, mode: '', two: false, shifts: shiftsOfTest(p, used) } })))
       .sort((a, b) => mins(windowOf(a.unit).start) - mins(windowOf(b.unit).start));
     const done = [], out = [];
-    units.forEach(({ p, unit }, i) => {
-      const used = p.slots.filter((s) => s.batches.length);
+    units.forEach(({ p, used, unit }, i) => {
       const taken = {};
       const over = done.filter((d) => overlaps(d.unit, unit));
       for (const d of over) for (const room of d.result.usedRooms) {
@@ -934,10 +945,9 @@ function BigLine({ left, placed, empty, what, more }) {
 }
 
 // One card for the whole test (all its papers share one seating); a change applies to every paper of the test
-const testTitle = (p) => { const used = p.slots.filter((s) => s.batches.length); return `${used.map((s) => `${slotName(p, s)} (${slotLabel(s)})`).join(' + ')} · ${pl(used.reduce((a, s) => a + s.batches.length, 0), 'batch')}`; };
 function LabStep({ p, idx, labsOn, order, setSlot: setOne, planOf, back, next, label }) {
   const setSlot = (pp, sid, patch) => setOne(pp, '*', patch);
-  const slots = p.slots.filter((s) => s.batches.length && planOf(s).c.online > 0).slice(0, 1);
+  const slots = p.slots.filter((s) => s.batches.length && planOf(s).first === s.id && planOf(s).c.online > 0);
   const groups = {};
   for (const l of labsOn) (groups[l.building] ||= []).push(l);
   const blds = Object.keys(groups).sort((a, b) => order.indexOf(a) - order.indexOf(b));
@@ -956,7 +966,7 @@ function LabStep({ p, idx, labsOn, order, setSlot: setOne, planOf, back, next, l
         const toggle = (k) => setSlot(p, s.id, { labs: sel.has(k) ? [...sel].filter((x) => x !== k) : [...sel, k] });
         return (
           <div className="card slotcard" key={s.id}>
-            <h2>{testTitle(p)}</h2>
+            <h2>{planOf(s).title}</h2>
             <BigLine left={prev.left} placed={need} empty={empty} what="online" more="Select more labs, or continue and they sit offline." />
             <p className="muted small"><button className="link" onClick={() => setSlot(p, s.id, { labs: labsOn.map(roomKey) })}>Select all labs</button> · <button className="link" onClick={() => setSlot(p, s.id, { labs: [] })}>Clear</button></p>
             {blds.map((b) => {
@@ -1008,7 +1018,7 @@ function RoomStep({ p, idx, settings, setSettings, setSlot: setOne, planOf, room
   const toggleGirls = (b) => setSettings((s) => ({ ...s, girlsOk: { ...s.girlsOk, [b]: s.girlsOk[b] === false } }));
   const roomsIn = (b) => roomsOn.filter((r) => r.building === b);
   const buildings = settings.buildingOrder.filter((b) => roomsIn(b).length);
-  const slots = p.slots.filter((s) => s.batches.length && planOf(s).offNeed > 0).slice(0, 1);
+  const slots = p.slots.filter((s) => s.batches.length && planOf(s).first === s.id && planOf(s).offNeed > 0);
   return (
     <section>
       <Head kicker={`Test ${idx + 1}: ${p.courses.join(', ')}`} title="Offline seating: buildings and rooms" lead="Tick the buildings for the offline students. Every room of a ticked building is used; open Choose rooms to leave a room out or change its capacity. All papers of this test are seated together. Seats another test fills at the same time are shown as used." />
@@ -1029,7 +1039,7 @@ function RoomStep({ p, idx, settings, setSettings, setSlot: setOne, planOf, room
         const toggleR = (k) => setSlot(p, s.id, { roomsOff: off.has(k) ? s.roomsOff.filter((x) => x !== k) : [...s.roomsOff, k] });
         return (
           <div className="card slotcard" key={s.id}>
-            <h2>{testTitle(p)}</h2>
+            <h2>{planOf(s).title}</h2>
             <BigLine left={prev.left} placed={need} empty={empty} what="offline" more="Tick another building." />
             <div className="bld-chips">
               {buildings.map((b) => {
@@ -1311,7 +1321,7 @@ function ResultStep({ results, view, setView, metaFor, multi, order, reshuffle, 
         <div><b>{result.usedRooms.length}</b><span>rooms used</span></div>
         <div><b>{girls}</b><span>girls seated</span></div>
         <div><b>{special}</b><span>monitoring, due fee, top</span></div>
-        <div><b>{shiftsOf(x.paper).length}</b><span>attendance {x.paper.two ? 'sheets (same seats)' : 'sheet'}</span></div>
+        <div><b>{shiftsOf(x.paper).length}</b><span>{shiftsOf(x.paper).length > 1 ? 'attendance sheets (one per shift)' : 'attendance sheet'}</span></div>
       </div>
       {result.warnings.map((w) => <div key={w} className="alert warn"><span>{w}</span></div>)}
 
