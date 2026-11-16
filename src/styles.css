@@ -403,3 +403,10 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -.01em; margin: 28px 0 8
 .paper .slot .field span { font-size: 12px; }
 .paper .slot .field input { padding: 4px 8px; font-size: 14px; }
 .paper .rpt-time { padding: 6px 8px; }
+
+/* RPT: batch chip with a take-out button, add a batch to a time */
+.chip-pair { display: inline-flex; align-items: center; gap: 2px; }
+.chip-x { border: 1px solid var(--line2); background: var(--card); color: var(--ink); border-radius: 999px; width: 26px; height: 26px; cursor: pointer; font: inherit; line-height: 1; padding: 0; }
+.chip-x:hover { border-color: #c0392b; color: #c0392b; }
+.addbatch { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.addbatch select { font: inherit; padding: 4px 6px; border: 1px solid var(--line2); border-radius: 8px; background: var(--card); color: var(--ink); }

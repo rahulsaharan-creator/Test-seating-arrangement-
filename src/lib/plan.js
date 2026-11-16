@@ -92,3 +92,43 @@ export function fillPreview(n, rooms, order = []) {
     });
   return { rooms: list, left };
 }
+
+// RPT: which batches (or part of a batch) sit at each time.
+// batches: [{ batch, count, girls }] in phase order. n: number of times. cap: lab seats at one time.
+// fill 'labs': each time takes students up to the lab seats, in phase and batch order; a batch that does not fit is split
+// and the rest of it starts the next time. fill 'equal': whole batches, the biggest to the time with the fewest students.
+// pins[i]: batches the operator put at time i (whole, placed first). outs[i]: batches the operator took out of time i.
+// noGirlsAt: the time where batches with girls may not sit (-1: none).
+// Returns lists[i] = { batches, parts: { batch: [from, to) }, load } and the students left without a time.
+export function rptFill({ batches, n, cap = 0, fill = 'labs', noGirlsAt = -1, pins = {}, outs = {} }) {
+  const valid = new Map(batches.map((b) => [b.batch, b]));
+  const pinnedTo = {};
+  for (const [i, bs] of Object.entries(pins)) if (Number(i) < n) for (const b of bs || []) if (valid.has(b)) pinnedTo[b] = Number(i);
+  const lists = Array.from({ length: n }, () => ({ batches: [], parts: {}, load: 0 }));
+  for (const [b, i] of Object.entries(pinnedTo)) { lists[i].batches.push(b); lists[i].load += valid.get(b).count; }
+  const out = (i, b) => (outs[i] || []).includes(b);
+  const girlsBlocked = (i, b) => b.girls > 0 && i === noGirlsAt;
+  const rem = Object.fromEntries(batches.map((b) => [b.batch, pinnedTo[b.batch] != null ? 0 : b.count]));
+  if (fill === 'labs' && cap > 0) {
+    for (let i = 0; i < n; i++) {
+      const L = lists[i];
+      for (const b of batches) {
+        if (L.load >= cap) break;
+        if (!rem[b.batch] || out(i, b.batch) || girlsBlocked(i, b)) continue;
+        const from = b.count - rem[b.batch], take = Math.min(rem[b.batch], cap - L.load);
+        L.batches.push(b.batch);
+        if (take < b.count) L.parts[b.batch] = [from, from + take];
+        rem[b.batch] -= take; L.load += take;
+      }
+    }
+  } else {
+    const order = batches.filter((b) => rem[b.batch]).sort((a, b) => (b.girls > 0) - (a.girls > 0) || b.count - a.count || naturalCompare(a.batch, b.batch));
+    for (const b of order) {
+      const i = lists.reduce((best, L, k) => (!out(k, b.batch) && !girlsBlocked(k, b) && (best < 0 || L.load < lists[best].load) ? k : best), -1);
+      if (i < 0) continue;
+      lists[i].batches.push(b.batch); lists[i].load += b.count; rem[b.batch] = 0;
+    }
+  }
+  const leftBatches = batches.filter((b) => rem[b.batch] > 0).map((b) => ({ batch: b.batch, n: rem[b.batch] }));
+  return { lists, left: leftBatches.reduce((a, x) => a + x.n, 0), leftBatches };
+}
