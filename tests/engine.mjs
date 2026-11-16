@@ -146,6 +146,19 @@ const basic = (res, n) => {
   ok(relativeNeighbours(byFather) > 0 && relativeNeighbours(keepRelativesApart(byFather)) === 0, 'brothers and sisters moved apart');
 }
 
+// 10. Two sort layers: father's name, then student name (Amit and Charu share father Ram)
+{
+  console.log('\n10. Seat order in two layers');
+  const st = [
+    { Roll_Number: '1', Student_Name: 'Charu', Father_Name: 'Ram', DOB: '2008-01-01' },
+    { Roll_Number: '2', Student_Name: 'Amit', Father_Name: 'Ram', DOB: '2008-01-01' },
+    { Roll_Number: '3', Student_Name: 'Bina', Father_Name: 'Mohan', DOB: '2007-01-01' },
+  ];
+  ok(orderSeats(st, 'father', 'name').map((s) => s.Student_Name).join() === 'Bina,Amit,Charu', 'father then name: ties sorted by name');
+  ok(orderSeats(st, 'father').map((s) => s.Student_Name).join() === 'Bina,Charu,Amit', 'father only: ties stay in roll order');
+  ok(orderSeats(st, 'dob', 'name').map((s) => s.Student_Name).join() === 'Bina,Amit,Charu', 'date of birth then name');
+}
+
 console.log('\nExact seats: no room left half empty');
 {
   // 15 seats where girls may sit, then a 5-seat boys-only room; 5 girls and 15 boys = 20 seats for 20 students

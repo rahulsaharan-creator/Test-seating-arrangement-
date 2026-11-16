@@ -60,7 +60,8 @@ export const FLAGS = ['Monitoring', 'Due fee', 'Top batch'];
  *   pins: {'Monitoring': ['GP|1', ...], ...},          // rooms or labs kept for each special group
  *   cbOf: {BATCH: 'Group name'},                      // SMD sheet group; default first letter + "-Phase"
  *   taken: {'GP|1': 12},                              // seats already used by an overlapping paper
- *   seatOrder: 'mixed' | 'roll',                     // seat order inside a room (default 'mixed')
+ *   seatOrder: 'mixed' | 'roll' | 'name' | ...,      // seat order (default 'mixed')
+ *   seatOrder2: '' | 'name' | ...,                   // second sort layer for students equal on seatOrder
  *   seed: number
  * }
  */
@@ -94,7 +95,7 @@ export function allocate(students, config) {
   // Seat order other than "mixed" (roll number, name, father's name...) runs across all rooms: rooms fill in that order.
   // "Mixed" shuffles everyone together. Sorting starts from roll order so ties stay stable.
   const how = config.seatOrder || 'mixed';
-  const arrange = (arr) => (how === 'mixed' ? shuffle(arr, rng) : orderSeats(arr.slice().sort((a, b) => naturalCompare(a.Roll_Number, b.Roll_Number)), how));
+  const arrange = (arr) => (how === 'mixed' ? shuffle(arr, rng) : orderSeats(arr.slice().sort((a, b) => naturalCompare(a.Roll_Number, b.Roll_Number)), how, config.seatOrder2));
 
   /**
    * Fill rooms in order, one completely before the next, keeping enough girls-allowed seats for the girls.
@@ -186,7 +187,7 @@ export function allocate(students, config) {
   const all = [...labs, ...rooms];
   for (const room of all) {
     room.occupants.sort((a, b) => naturalCompare(a.Roll_Number, b.Roll_Number));
-    room.occupants = orderSeats(room.occupants, how);
+    room.occupants = orderSeats(room.occupants, how, config.seatOrder2);
     if (config.apart) room.occupants = keepRelativesApart(room.occupants);
     room.occupants.forEach((s, idx) => {
       assigned.push({ ...s, Building: room.building, 'Room No.': room.room, 'Seat No.': room.taken + idx + 1, CB: (config.cbOf || {})[s.Batch] || phaseOf(s.Batch) });
@@ -211,15 +212,14 @@ export function dobKey(v) {
 export const SEAT_ORDERS = {
   mixed: 'Mixed batches', roll: 'Roll number', name: 'Student name (A to Z)', father: "Father's name (A to Z)", dob: 'Date of birth (oldest first)', contact: 'Contact number',
 };
-export function orderSeats(list, how) {
-  const by = (f) => list.slice().sort((a, b) => f(a, b) || naturalCompare(a.Roll_Number, b.Roll_Number));
-  const txt = (k) => (a, b) => String(a[k] || '~').localeCompare(String(b[k] || '~'), undefined, { sensitivity: 'base', numeric: true });
+export function orderSeats(list, how, then = '') {
+  if (how === 'mixed' || !SEAT_ORDERS[how]) return mixBatches(list);
   if (how === 'roll') return list;
-  if (how === 'name') return by(txt('Student_Name'));
-  if (how === 'father') return by(txt('Father_Name'));
-  if (how === 'contact') return by(txt('Contact_Number'));
-  if (how === 'dob') return by((a, b) => dobKey(a.DOB) - dobKey(b.DOB) || 0);
-  return mixBatches(list);
+  const txt = (k) => (a, b) => String(a[k] || '~').localeCompare(String(b[k] || '~'), undefined, { sensitivity: 'base', numeric: true });
+  const cmp = { name: txt('Student_Name'), father: txt('Father_Name'), contact: txt('Contact_Number'), dob: (a, b) => (dobKey(a.DOB) - dobKey(b.DOB)) || 0 };
+  // Two layers: sort by the first choice; students equal on it are sorted by the second (then by roll number)
+  const f1 = cmp[how], f2 = then && then !== how ? cmp[then] : null;
+  return list.slice().sort((a, b) => f1(a, b) || (f2 ? f2(a, b) : 0) || naturalCompare(a.Roll_Number, b.Roll_Number));
 }
 
 // Brothers and sisters (same father's name or same contact number) do not sit side by side, where it can be avoided

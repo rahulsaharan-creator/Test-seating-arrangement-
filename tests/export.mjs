@@ -31,4 +31,13 @@ ok(sl2.rowCount - 1 === p1.assigned.length + p2.assigned.length && sl2.getRow(1)
 ok(all.worksheets.filter((w) => w.name.startsWith('Attendance')).length === 1, 'one workbook: a single Attendance sheet');
 fs.mkdirSync('tests/out', { recursive: true });
 await wb.xlsx.writeFile('tests/out/demo_paper1.xlsx'); await nb.xlsx.writeFile('tests/out/demo_notice_board.xlsx'); await all.xlsx.writeFile('tests/out/demo_all_papers.xlsx');
+// Capacity changed for one test: the sheets show the original capacity and the students seated
+{
+  const rooms = defaults.rooms.map((r) => (r.building === 'GP' && String(r.room) === '1' ? { ...r, base: Number(r.capacity), capacity: Number(r.capacity) + 5 } : r));
+  const pr = allocate(mk(60, 'XA1', 1), { ...cfg, rooms, flags: {}, pins: {} });
+  const w = buildWorkbook(ExcelJS, pr, meta2);
+  const room = pr.usedRooms.find((r) => r.building === 'GP' && String(r.room) === '1');
+  let row = null; w.getWorksheet('Raw_Data').eachRow((r) => { if (r.getCell(1).value === 'GP' && String(r.getCell(2).value) === '1') row = r; });
+  ok(room && row && row.getCell(3).value === room.base && row.getCell(4).value === room.used, `Raw_Data shows the original capacity ${room?.base} and ${room?.used} seated (test used ${room?.capacity} seats)`);
+}
 console.log(fails ? `${fails} FAILED` : 'All export checks passed'); process.exit(fails ? 1 : 0);

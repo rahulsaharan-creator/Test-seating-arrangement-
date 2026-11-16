@@ -22,9 +22,12 @@ function loadSettings() {
     const s = JSON.parse(localStorage.getItem(STORE));
     if (s && s.rooms) {
       const f = freshSettings();
-      const labs = (s.labs || f.labs).map((l) => ({ girls: true, ...l }));
-      const order = allBuildingsOf(s.rooms, labs, s.buildingOrder || f.buildingOrder);
-      return { ...f, ...s, labs, buildingOrder: order, buildingsOn: s.buildingsOn || order.slice() };
+      // Capacity changes now belong to one test (paper.cap / paper.labCap): the saved room list keeps the original capacity
+      const orig = (r) => { const { base, ...x } = r; return base != null ? { ...x, capacity: Number(base) } : x; };
+      const labs = (s.labs || f.labs).map((l) => orig({ girls: true, ...l }));
+      const rooms = s.rooms.map(orig);
+      const order = allBuildingsOf(rooms, labs, s.buildingOrder || f.buildingOrder);
+      return { ...f, ...s, rooms, labs, buildingOrder: order, buildingsOn: s.buildingsOn || order.slice() };
     }
   } catch { /* storage unavailable or empty */ }
   return freshSettings();
@@ -187,20 +190,25 @@ export default function App() {
   const modeIn = (p, s, b) => (s.mode === 'Online' ? 'Online' : s.mode === 'Offline' ? 'Offline' : s.online.includes(b) ? 'Online' : 'Offline');
   const labsOn = settings.labs.filter((l) => l.enabled && Number(l.capacity) > 0);
   const roomsOn = settings.rooms.filter((r) => r.enabled && Number(r.capacity) > 0);
+  // Capacity changed for one test only: p.cap (classrooms) and p.labCap (labs) map a room key to its seats for that test.
+  // base keeps the original capacity, shown in the Excel file. Other tests always start from the original room list.
+  const withCap = (list, m) => (m ? list.map((r) => (m[roomKey(r)] != null ? { ...r, base: Number(r.capacity), capacity: Math.max(0, Number(m[roomKey(r)]) || 0) } : r)) : list);
+  const labsOf = (p) => withCap(labsOn, p && p.labCap);
+  const roomsOf = (p) => withCap(roomsOn, p && p.cap);
   // Until the operator picks labs and buildings for a time slot, every lab and every building in use counts for the estimate
   // Rooms and labs kept for monitoring or due fee students are always part of the seating (and of every seat count),
   // even when their building is not ticked, so the counts match what the seating really uses.
   const pinKeys = new Set(['Monitoring', 'Due fee'].filter((f) => lists[f].length).flatMap((f) => settings.pins[f] || []));
-  const slotLabs = (s) => (s.labs ? labsOn.filter((l) => s.labs.includes(roomKey(l)) || pinKeys.has(roomKey(l))) : labsOn);
+  const slotLabs = (s, p) => (s.labs ? labsOf(p).filter((l) => s.labs.includes(roomKey(l)) || pinKeys.has(roomKey(l))) : labsOf(p));
   const slotBuildings = (s) => s.buildings || settings.buildingsOn;
-  const slotRooms = (s) => roomsOn.filter((r) => (slotBuildings(s).includes(r.building) && !s.roomsOff.includes(roomKey(r))) || pinKeys.has(roomKey(r)));
+  const slotRooms = (s, p) => roomsOf(p).filter((r) => (slotBuildings(s).includes(r.building) && !s.roomsOff.includes(roomKey(r))) || pinKeys.has(roomKey(r)));
   const sumSeats = (list) => list.reduce((a, r) => a + Number(r.capacity || 0), 0);
   const countSlot = (p, s) => {
     const c = { online: 0, offline: 0 };
     for (const b of s.batches) for (const st of stuOf(s, b)) c[((s.mode === 'Both' && studentMode[st.Roll_Number]) || modeIn(p, s, b)) === 'Online' ? 'online' : 'offline']++;
     return c;
   };
-  const sumSlot = (p, s) => seatSummary({ ...countSlot(p, s), labSeats: sumSeats(slotLabs(s)), roomSeats: sumSeats(slotRooms(s)) });
+  const sumSlot = (p, s) => seatSummary({ ...countSlot(p, s), labSeats: sumSeats(slotLabs(s, p)), roomSeats: sumSeats(slotRooms(s, p)) });
   const addUp = (list) => list.reduce((a, x) => { for (const k of Object.keys(x)) a[k] = (a[k] || 0) + x[k]; return a; }, {});
   const paperOk = (p) => !!(p.courses.length && p.slots.length && p.slots.every((s) => slotOk(s) && s.mode && s.phases.length && s.batches.length));
 
@@ -208,8 +216,9 @@ export default function App() {
   const flags = useMemo(() => {
     const f = {};
     for (const b of top) for (const s of studentsByBatch[b] || []) f[s.Roll_Number] = 'Top batch';
-    for (const r of lists['Due fee']) f[r] = 'Due fee';
+    // A student on both lists is seated once, with the due fee students
     for (const r of lists.Monitoring) f[r] = 'Monitoring';
+    for (const r of lists['Due fee']) f[r] = 'Due fee';
     return f;
   }, [top, lists, studentsByBatch]);
   const appearingRolls = new Set(papers.flatMap((p) => p.slots.flatMap((s) => s.batches.flatMap((b) => stuOf(s, b).map((x) => x.Roll_Number)))));
@@ -224,7 +233,7 @@ export default function App() {
     const w = { start: hhmm(Math.min(...used.map((x) => mins(x.start)))), end: hhmm(Math.max(...used.map((x) => mins(x.two ? x.s2.end : x.end)))) };
     const shifts = used.flatMap(shiftsOfSlot);
     const labs = new Map(), rooms = new Map();
-    for (const x of used) { for (const l of slotLabs(x)) labs.set(roomKey(l), l); for (const r of slotRooms(x)) rooms.set(roomKey(r), r); }
+    for (const x of used) { for (const l of slotLabs(x, p)) labs.set(roomKey(l), l); for (const r of slotRooms(x, p)) rooms.set(roomKey(r), r); }
     return {
       p, s: used[0], used, w, shifts, name: `${(p.name || '').trim() || `Test ${i + 1}`}${all.length > 1 ? ` · ${used.map((x) => slotName(p, x)).join(' + ')}` : ''}`,
       c: addUp(used.map((x) => countSlot(p, x)).concat([{ online: 0, offline: 0 }])),
@@ -267,30 +276,36 @@ export default function App() {
     for (const y of x.used) plan[y.id] = one;
   }
   const planOf = (s) => plan[s.id] || { taken: { labs: {}, rooms: {} }, labs: [], rooms: [], offNeed: 0, c: { online: 0, offline: 0 }, roomList: [] };
-  // Room capacity for one building: by a percentage or by a number of seats shared equally, always from the original capacity
-  const adjustCap = (b, how, v) => setSettings((st) => {
-    const idx = st.rooms.map((r, i) => [r, i]).filter(([r]) => r.building === b && r.enabled);
-    const n = idx.length;
-    if (!n) return st;
-    const rooms = st.rooms.slice();
-    idx.forEach(([r, i], j) => {
-      const base = r.base ?? Number(r.capacity);
-      const cap = how === 'pct' ? Math.round((base * v) / 100) : how === 'num' ? base + Math.trunc(v / n) + (j < Math.abs(v % n) ? Math.sign(v) : 0) : base;
-      rooms[i] = how === 'reset' ? { ...r, capacity: base, base: undefined } : { ...r, base, capacity: Math.max(0, cap) };
-    });
-    return { ...st, rooms };
-  });
-  const setRoomCap = (k, v) => setSettings((st) => ({ ...st, rooms: st.rooms.map((r) => (roomKey(r) === k ? { ...r, base: r.base ?? Number(r.capacity), capacity: Math.max(0, Number(v) || 0) } : r)) }));
-  // Lab seats: every switched-on lab by a percentage or by a number of seats per lab, or one lab by hand; always from the
-  // original capacity, so Reset brings the room list back
-  const adjustLabs = (how, v) => setSettings((st) => ({ ...st, labs: st.labs.map((l) => {
-    if (!l.enabled) return l;
-    const base = l.base ?? Number(l.capacity);
-    if (how === 'reset') return { ...l, capacity: base, base: undefined };
-    return { ...l, base, capacity: Math.max(0, how === 'pct' ? Math.round((base * v) / 100) : base + Math.trunc(v)) };
+  // Capacity changes are kept on the test (p.cap for classrooms, p.labCap for labs), never in the room list, so the next
+  // test starts from the original capacity. A room set back to its original capacity is dropped from the map.
+  const setCaps = (pid, field, list, fn) => setTest((t) => ({ ...t, papers: t.papers.map((p) => {
+    if (p.id !== pid) return p;
+    const m = { ...(p[field] || {}) };
+    fn(m, (r) => (m[roomKey(r)] != null ? Number(m[roomKey(r)]) : Number(r.capacity)));
+    for (const r of list) if (m[roomKey(r)] != null && Number(m[roomKey(r)]) === Number(r.capacity)) delete m[roomKey(r)];
+    return { ...p, [field]: m, done: false };
   }) }));
-  const setLabCap = (k, v) => setSettings((st) => ({ ...st, labs: st.labs.map((l) => (roomKey(l) === k ? { ...l, base: l.base ?? Number(l.capacity), capacity: Math.max(0, Number(v) || 0) } : l)) }));
+  // Percent: +10 means 10% more than the original capacity (-10 means 10% less). Seats: added to what the rooms have now,
+  // shared equally between the rooms given (the rooms in use in that building).
+  const pctOf = (r, v) => Math.max(0, Math.round((Number(r.capacity) * (100 + v)) / 100));
+  const adjustCap = (p, b, how, v, keys) => {
+    const list = roomsOn.filter((r) => r.building === b);
+    const use = keys ? list.filter((r) => keys.includes(roomKey(r))) : list;
+    setCaps(p.id, 'cap', roomsOn, (m, cur) => {
+      if (how === 'reset') { for (const r of list) delete m[roomKey(r)]; return; }
+      const n = use.length;
+      use.forEach((r, j) => { m[roomKey(r)] = how === 'pct' ? pctOf(r, v) : Math.max(0, cur(r) + Math.trunc(v / n) + (j < Math.abs(v % n) ? Math.sign(v) : 0)); });
+    });
+  };
+  const setRoomCap = (p, k, v) => setCaps(p.id, 'cap', roomsOn, (m) => { m[k] = Math.max(0, Number(v) || 0); });
+  // Lab seats for one test: every lab by a percentage or by a number of seats per lab, or one lab by hand
+  const adjustLabs = (p, how, v) => setCaps(p.id, 'labCap', labsOn, (m, cur) => {
+    if (how === 'reset') { for (const k of Object.keys(m)) delete m[k]; return; }
+    for (const l of labsOn) m[roomKey(l)] = how === 'pct' ? pctOf(l, v) : Math.max(0, cur(l) + Math.trunc(v));
+  });
+  const setLabCap = (p, k, v) => setCaps(p.id, 'labCap', labsOn, (m) => { m[k] = Math.max(0, Number(v) || 0); });
   const labSeats = sumSeats(labsOn);
+  const labSeatsOf = (p) => sumSeats(labsOf(p));
 
   // ---------- handlers
   async function onAdmission(file) {
@@ -351,17 +366,18 @@ export default function App() {
     const rank = (b) => { const i = settings.buildingOrder.indexOf(b); return i < 0 ? 1e9 : i; };
     // Rooms and labs kept for monitoring or due fee students are used anyway: count them first
     const labs = [];
-    let labSeats = labsOn.filter((l) => pinKeys.has(roomKey(l))).reduce((a, l) => a + free(l, 'labs'), 0);
-    for (const l of labsOn.map((r, i) => ({ r, i })).sort((a, b) => rank(a.r.building) - rank(b.r.building) || a.i - b.i).map((x) => x.r)) {
+    const labsOnP = labsOf(p), roomsOnP = roomsOf(p);
+    let labSeats = labsOnP.filter((l) => pinKeys.has(roomKey(l))).reduce((a, l) => a + free(l, 'labs'), 0);
+    for (const l of labsOnP.map((r, i) => ({ r, i })).sort((a, b) => rank(a.r.building) - rank(b.r.building) || a.i - b.i).map((x) => x.r)) {
       if (labSeats >= c.online) break;
       if (free(l, 'labs') > 0 && !pinKeys.has(roomKey(l))) { labs.push(roomKey(l)); labSeats += free(l, 'labs'); }
     }
     const offNeed = Math.max(0, ...gc.map((x) => x.offline + Math.max(0, x.online - labSeats)));
     const buildings = [];
-    let roomSeats = roomsOn.filter((r) => pinKeys.has(roomKey(r))).reduce((a, r) => a + free(r, 'rooms'), 0);
+    let roomSeats = roomsOnP.filter((r) => pinKeys.has(roomKey(r))).reduce((a, r) => a + free(r, 'rooms'), 0);
     for (const b of settings.buildingOrder.filter((x) => settings.buildingsOn.includes(x))) {
       if (roomSeats >= offNeed) break;
-      const seats = roomsOn.filter((r) => r.building === b && !pinKeys.has(roomKey(r))).reduce((a, r) => a + free(r, 'rooms'), 0);
+      const seats = roomsOnP.filter((r) => r.building === b && !pinKeys.has(roomKey(r))).reduce((a, r) => a + free(r, 'rooms'), 0);
       if (seats > 0) { buildings.push(b); roomSeats += seats; }
     }
     return { labs, buildings };
@@ -411,15 +427,15 @@ export default function App() {
       const shiftLabel = (x) => `${fmtTime(x.start)}${x.end ? ` to ${fmtTime(x.end)}` : ''}`;
       const st = pairs.flatMap(([s, b]) => stuOf(s, b).map((x) => ({ ...x, Paper: slotName(p, s), _shifts: (s.two ? [s, s.s2] : [s]).map(shiftLabel) })));
       // Labs and rooms: every one chosen for any paper of the test, plus the rooms kept for monitoring and due fee students
-      const labKeys = new Set(used.flatMap((s) => slotLabs(s).map(roomKey)));
-      const roomKeys = new Set(used.flatMap((s) => slotRooms(s).map(roomKey)));
+      const labKeys = new Set(used.flatMap((s) => slotLabs(s, p).map(roomKey)));
+      const roomKeys = new Set(used.flatMap((s) => slotRooms(s, p).map(roomKey)));
       const studentModeAll = used.some((s) => s.mode === 'Both') ? studentMode : {};
       const cfg = {
-        rooms: settings.rooms.map((r) => ({ ...r, enabled: !!r.enabled && roomKeys.has(roomKey(r)) })),
-        labs: settings.labs.map((l) => ({ ...l, enabled: !!l.enabled && labKeys.has(roomKey(l)) })),
+        rooms: withCap(settings.rooms, p.cap).map((r) => ({ ...r, enabled: !!r.enabled && roomKeys.has(roomKey(r)) })),
+        labs: withCap(settings.labs, p.labCap).map((l) => ({ ...l, enabled: !!l.enabled && labKeys.has(roomKey(l)) })),
         buildingOrder: settings.buildingOrder, girlsOk: settings.girlsOk,
         batchMode, studentMode: studentModeAll, flags, pins: Object.fromEntries(Object.entries(settings.pins || {}).filter(([f]) => !(f in lists) || lists[f].length)), cbOf,
-        seatOrder: settings.seatOrder || 'mixed', apart: !!settings.apart, seed: newSeed + i, taken,
+        seatOrder: settings.seatOrder || 'mixed', seatOrder2: settings.seatOrder2 || '', apart: !!settings.apart, seed: newSeed + i, taken,
       };
       const result = allocate(st, cfg);
       done.push({ unit, result, index: i });
@@ -535,7 +551,8 @@ export default function App() {
               onFile={onRoomFile} template={() => downloadTemplate('rooms')} />
             <details className="fold">
               <summary>Monitoring and due fee students <span className="muted">· optional · {lists.Monitoring.length} monitoring, {lists['Due fee'].length} due fee</span></summary>
-              <p className="muted">Upload or paste their roll numbers, then pick the rooms where they sit. They are seated in these rooms first; other students fill the free seats only after every other room is full.</p>
+              <p className="muted">Upload or paste their roll numbers, then pick the rooms where they sit. They are seated in these rooms first; other students fill the free seats only after every other room is full. A student on both lists is seated once, with the due fee students.</p>
+              {(() => { const dueSet = new Set(lists['Due fee']); const both = lists.Monitoring.filter((r) => dueSet.has(r)).length; return both ? <p className="small warnt">{pl(both, 'student')} on both lists: seated with the due fee students only.</p> : null; })()}
               {['Monitoring', 'Due fee'].map((f) => (
                 <div className="card special" key={f}>
                   <div className="special-head"><b>{f} students</b><span className="muted small">{pl(lists[f].length, 'roll number')}</span></div>
@@ -548,7 +565,7 @@ export default function App() {
               ))}
             </details>
             <details className="fold">
-              <summary>Seating rules <span className="muted">· {SEAT_ORDERS[settings.seatOrder || 'mixed']}{settings.apart ? ' · brothers and sisters apart' : ''}</span></summary>
+              <summary>Seating rules <span className="muted">· {SEAT_ORDERS[settings.seatOrder || 'mixed']}{!['mixed', 'roll'].includes(settings.seatOrder || 'mixed') && settings.seatOrder2 && settings.seatOrder2 !== settings.seatOrder ? `, then ${SEAT_ORDERS[settings.seatOrder2].toLowerCase()}` : ''}{settings.apart ? ' · brothers and sisters apart' : ''}</span></summary>
               <SeatRules settings={settings} setSettings={setSettings} students={adm?.students || []} />
             </details>
             <details className="fold">
@@ -565,17 +582,17 @@ export default function App() {
         {step === 'test' && (
           <PaperStep test={test} setTest={setTest} setPaper={setPaper} setSlot={setSlot} courses={courses} phases={phases} ownerOf={ownerOf} slotOf={slotOf}
             batchMap={batchMap} phaseBatches={phaseBatches} studentsByBatch={studentsByBatch} studentMode={studentMode} setStudentMode={setStudentMode}
-            top={top} setTop={setTop} sumSlot={sumSlot} paperOk={paperOk} start={startPaper} back={() => setStep('students')} labSeats={labSeats} labsOn={labsOn} adjustLabs={adjustLabs} setLabCap={setLabCap} />
+            top={top} setTop={setTop} sumSlot={sumSlot} paperOk={paperOk} start={startPaper} back={() => setStep('students')} labSeatsOf={labSeatsOf} labsOf={labsOf} adjustLabs={adjustLabs} setLabCap={setLabCap} />
         )}
 
         {step === 'labs' && curP && (
-          <LabStep p={curP} idx={curIdx} labsOn={labsOn} order={settings.buildingOrder} setSlot={setSlot} countSlot={countSlot} planOf={planOf}
+          <LabStep p={curP} idx={curIdx} labsOn={labsOf(curP)} order={settings.buildingOrder} setSlot={setSlot} countSlot={countSlot} planOf={planOf}
             back={() => setStep('test')} next={() => (offlineNeeded ? setStep('rooms') : prepare())} label={offlineNeeded ? 'Continue' : 'Prepare seating'} />
         )}
 
         {step === 'rooms' && curP && (
           <RoomStep p={curP} idx={curIdx} settings={settings} setSettings={setSettings} setSlot={setSlot} planOf={planOf}
-            roomsOn={roomsOn} slotRooms={slotRooms} onRoomFile={onRoomFile} adjustCap={adjustCap} setRoomCap={setRoomCap}
+            roomsOn={roomsOf(curP)} onRoomFile={onRoomFile} adjustCap={(...a) => adjustCap(curP, ...a)} setRoomCap={(...a) => setRoomCap(curP, ...a)}
             back={() => setStep(labsNeeded ? 'labs' : 'test')} next={prepare} label="Prepare seating" />
         )}
 
@@ -693,7 +710,7 @@ function Nav({ back, next, nextOk = true, nextLabel = 'Continue', hint, children
   );
 }
 
-function PaperStep({ test, setTest, setPaper, setSlot, courses, phases, ownerOf, slotOf, phaseBatches, studentsByBatch, studentMode, setStudentMode, top, setTop, sumSlot, paperOk, start, back, labSeats, labsOn, adjustLabs, setLabCap }) {
+function PaperStep({ test, setTest, setPaper, setSlot, courses, phases, ownerOf, slotOf, phaseBatches, studentsByBatch, studentMode, setStudentMode, top, setTop, sumSlot, paperOk, start, back, labSeatsOf, labsOf, adjustLabs, setLabCap }) {
   const addPaper = () => setTest({ ...test, papers: [...test.papers, newPaper()] });
   const kind = test.kind || 'PRT';
   const setKind = (k) => { if (k !== kind && (!test.papers.some((p) => p.courses.length) || confirm('Switch the test type? The tests set up below are cleared.'))) setTest({ ...test, kind: k, papers: [newPaper()] }); };
@@ -724,7 +741,7 @@ function PaperStep({ test, setTest, setPaper, setSlot, courses, phases, ownerOf,
           <div className="papers">
             {test.papers.map((p, i) => (kind === 'RPT' ? (
               <RptCard key={p.id} p={p} i={i} n={test.papers.length} setPaper={setPaper} remove={() => removePaper(p.id)} courses={courses} phases={phases} sumSlot={sumSlot} ok={paperOk(p)} start={() => start(p)} top={top} setTop={setTop}
-                labSeats={labSeats} labsOn={labsOn} adjustLabs={adjustLabs} setLabCap={setLabCap} />
+                labSeats={labSeatsOf(p)} labsOn={labsOf(p)} adjustLabs={(how, v) => adjustLabs(p, how, v)} setLabCap={(k, v) => setLabCap(p, k, v)} />
             ) : (
               <PaperCard key={p.id} p={p} i={i} n={test.papers.length} setPaper={setPaper} setSlot={setSlot} remove={() => removePaper(p.id)}
                 courses={courses} phases={phases} ownerOf={ownerOf} slotOf={slotOf} phaseBatches={phaseBatches}
@@ -1000,12 +1017,12 @@ function LabSeats({ labSeats, labsOn, adjustLabs, setLabCap }) {
   return (
     <div className="q">
       <b className="q-l">4. Lab seats</b>
-      <p className="small"><b>{labSeats} lab seats</b> at one time in {pl(labsOn.length, 'lab')}{labSeats !== base ? ` (normally ${base})` : ''}.{!labsOn.length ? ' No labs in the room list: upload it on step 1.' : ''}</p>
+      <p className="small"><b>{labSeats} lab seats</b> at one time in {pl(labsOn.length, 'lab')}{labSeats !== base ? ` (normally ${base}; changed for this test only)` : ''}.{!labsOn.length ? ' No labs in the room list: upload it on step 1.' : ''}</p>
       {labsOn.length > 0 && (
         <div className="captool">
           <label className="small">Add <input className="cap sm" type="number" placeholder="5" value={num} onChange={(e) => setNum(e.target.value)} aria-label="Seats to add to every lab" /> seats to every lab</label>
           <button className="btn ghost sm" disabled={num === ''} onClick={() => { adjustLabs('num', Number(num)); setNum(''); }}>Apply</button>
-          <label className="small">or set every lab to <input className="cap sm" type="number" min="0" placeholder="110" value={pct} onChange={(e) => setPct(e.target.value)} aria-label="Percent of normal lab capacity" /> %</label>
+          <label className="small">or increase every lab by <input className="cap sm" type="number" placeholder="10" value={pct} onChange={(e) => setPct(e.target.value)} aria-label="Percent to add to normal lab capacity" /> %</label>
           <button className="btn ghost sm" disabled={pct === ''} onClick={() => { adjustLabs('pct', Number(pct)); setPct(''); }}>Apply %</button>
           {labSeats !== base && <button className="link small" onClick={() => adjustLabs('reset')}>Reset</button>}
         </div>
@@ -1119,23 +1136,32 @@ function PaperBox({ p, s, k, setPaper, setSlot, phases, ownerOf, slotOf, pb, stu
         </div>
       </div>
 
-      {s.mode && (
-        <div className="q">
-          <b className="q-l">c. Phases in {s.name.trim() || label}</b>
-          <p className="muted small"><button className="link" onClick={() => set(keepBatches(s, phases, phases.filter((g) => p.courses.includes(g.course) && (!ownerOf[g.key] || ownerOf[g.key] === s.id)).map((g) => g.key)))}>Select all</button> · <button className="link" onClick={() => set(keepBatches(s, phases, []))}>Clear</button></p>
-          <div className="chips">
-            {phases.filter((g) => p.courses.includes(g.course)).map((g) => {
-              const other = ownerOf[g.key] && ownerOf[g.key] !== s.id;
-              return (
-                <button key={g.key} type="button" className={`chip-btn ${s.phases.includes(g.key) ? 'on' : ''}`} disabled={other}
-                  title={other ? 'Already in another paper' : g.batches.map((b) => b.batch).join(', ')} onClick={() => set(keepBatches(s, phases, toggleIn(s.phases, g.key)))}>
-                  {p.courses.length > 1 ? `${g.course} · ` : ''}{g.phase} <small>{g.count}</small>
-                </button>
-              );
-            })}
+      {s.mode && (() => {
+        // A phase stays open for this paper while some of its batches are not in another paper yet: a phase with 2 of
+        // its 3 batches in Paper 1 shows here with the 3rd batch free
+        const elsewhere = (b) => slotOf[b.batch] && slotOf[b.batch].slot !== s.id;
+        const freeIn = (g) => g.batches.filter((b) => !elsewhere(b));
+        const shown = phases.filter((g) => p.courses.includes(g.course));
+        return (
+          <div className="q">
+            <b className="q-l">c. Phases in {s.name.trim() || label}</b>
+            <p className="muted small"><button className="link" onClick={() => set(keepBatches(s, phases, shown.filter((g) => s.phases.includes(g.key) || freeIn(g).length).map((g) => g.key)))}>Select all</button> · <button className="link" onClick={() => set(keepBatches(s, phases, []))}>Clear</button></p>
+            <div className="chips">
+              {shown.map((g) => {
+                const left = freeIn(g), part = left.length < g.batches.length;
+                const full = !left.length && !s.phases.includes(g.key);
+                return (
+                  <button key={g.key} type="button" className={`chip-btn ${s.phases.includes(g.key) ? 'on' : ''}`} disabled={full}
+                    title={full ? 'All its batches are in another paper' : part ? `Free here: ${left.map((b) => b.batch).join(', ')}` : g.batches.map((b) => b.batch).join(', ')} onClick={() => set(keepBatches(s, phases, toggleIn(s.phases, g.key)))}>
+                    {p.courses.length > 1 ? `${g.course} · ` : ''}{g.phase} <small>{part ? `${left.reduce((a, b) => a + b.count, 0)} of ${g.count}` : g.count}</small>
+                  </button>
+                );
+              })}
+            </div>
+            {shown.some((g) => freeIn(g).length && freeIn(g).length < g.batches.length) && <p className="muted small">“x of y”: the phase has batches in another paper; only its free batches can be ticked here.</p>}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {s.mode && s.phases.length > 0 && (
         <div className="q">
@@ -1329,7 +1355,7 @@ function RoomStep({ p, idx, settings, setSettings, setSlot: setOne, planOf, room
                 );
               })}
             </div>
-            <CapacityTool buildings={buildings} roomsIn={roomsIn} adjustCap={adjustCap} />
+            <CapacityTool buildings={buildings} roomsIn={roomsIn} inUse={(r) => !off.has(roomKey(r))} adjustCap={adjustCap} />
             {sel.size > 0 && (
               <details className="fold inner">
                 <summary>Choose rooms <span className="muted">· {rooms.length} rooms in use · capacity can be typed per room</span></summary>
@@ -1343,7 +1369,7 @@ function RoomStep({ p, idx, settings, setSettings, setSlot: setOne, planOf, room
                           <div key={k} className={`room-chip ${use ? 'on' : ''} ${f && f.filled ? 'filled' : ''} ${u ? 'taken' : ''}`} title={u ? `${u} seats used by ${used[k].by.join(', ')}` : ''}>
                             <label><input type="checkbox" checked={use} onChange={() => toggleR(k)} /> <b>{r.room}</b></label>
                             <input className="cap sm" type="number" min="0" value={r.capacity} onChange={(e) => setRoomCap(k, e.target.value)} aria-label={`Capacity of ${b} ${r.room}`} />
-                            <span>{u ? `${u} used · ` : ''}{use && f ? `${f.filled} filled` : ''}</span>
+                            <span>{r.base != null && r.base !== Number(r.capacity) ? `normally ${r.base} · ` : ''}{u ? `${u} used · ` : ''}{use && f ? `${f.filled} filled` : ''}</span>
                           </div>
                         );
                       })}
@@ -1385,26 +1411,29 @@ function RoomStep({ p, idx, settings, setSettings, setSlot: setOne, planOf, room
   );
 }
 
-// Change the room capacity of one building: by a percentage, or by a number of seats shared equally between its rooms
-function CapacityTool({ buildings, roomsIn, adjustCap }) {
+// Change the room capacity of one building for this test: by a percentage of the original capacity, or by a number of
+// seats added to what the building has now and shared equally between its rooms in use
+function CapacityTool({ buildings, roomsIn, inUse, adjustCap }) {
   const [b, setB] = useState('');
   const [pct, setPct] = useState('');
   const [num, setNum] = useState('');
   const cur = b || buildings[0] || '';
   const list = cur ? roomsIn(cur) : [];
+  const use = list.filter(inUse);
   const seats = list.reduce((a, r) => a + Number(r.capacity), 0);
   const base = list.reduce((a, r) => a + Number(r.base ?? r.capacity), 0);
   if (!buildings.length) return null;
   return (
     <div className="captool">
-      <b className="small">Change capacity</b>
+      <b className="small">Change capacity for this test</b>
       <select value={cur} onChange={(e) => setB(e.target.value)} aria-label="Building">{buildings.map((x) => <option key={x} value={x}>{x}</option>)}</select>
       <span className="muted small">{seats} seats{seats !== base ? ` (normally ${base})` : ''}</span>
-      <label className="small">to <input className="cap sm" type="number" min="0" placeholder="80" value={pct} onChange={(e) => setPct(e.target.value)} aria-label="Percent of normal capacity" /> %</label>
+      <label className="small">increase by <input className="cap sm" type="number" placeholder="10" value={pct} onChange={(e) => setPct(e.target.value)} aria-label="Percent to add to normal capacity" /> %</label>
       <button className="btn ghost sm" disabled={pct === ''} onClick={() => { adjustCap(cur, 'pct', Number(pct)); setPct(''); }}>Apply %</button>
-      <label className="small">or by <input className="cap sm" type="number" placeholder="-20" value={num} onChange={(e) => setNum(e.target.value)} aria-label="Seats to add or remove" /> seats</label>
-      <button className="btn ghost sm" disabled={num === ''} onClick={() => { adjustCap(cur, 'num', Number(num)); setNum(''); }}>Apply seats</button>
+      <label className="small">or add <input className="cap sm" type="number" placeholder="20" value={num} onChange={(e) => setNum(e.target.value)} aria-label="Seats to add (minus to remove)" /> seats</label>
+      <button className="btn ghost sm" disabled={num === '' || !use.length} onClick={() => { adjustCap(cur, 'num', Number(num), use.map(roomKey)); setNum(''); }}>Add seats</button>
       {seats !== base && <button className="link small" onClick={() => adjustCap(cur, 'reset')}>Reset</button>}
+      <span className="muted small">Seats are shared between the {pl(use.length, 'room')} in use. A minus number removes seats. Other tests keep the normal capacity.</span>
     </div>
   );
 }
@@ -1422,7 +1451,15 @@ function SeatRules({ settings, setSettings, students }) {
           {Object.entries(SEAT_ORDERS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </select>
       </label>
-      <p className="muted small">{order === 'mixed' ? 'Students of all papers are shuffled together, and two students of the same batch never sit side by side. Reshuffle on the result page gives a new mix.' : `Every student of the test is seated in ${SEAT_ORDERS[order].toLowerCase()} order: the first room fills first, seat 1 onwards, then the next room.`}{['father', 'dob', 'contact'].includes(order) ? ' Needs that column in the admission list; students without it come last.' : ''}</p>
+      {!['mixed', 'roll'].includes(order) && (
+        <label className="field"><span>Then by <em className="muted">(students equal on the first order)</em></span>
+          <select value={settings.seatOrder2 || ''} onChange={(e) => setSettings((x) => ({ ...x, seatOrder2: e.target.value }))} aria-label="Second seat order">
+            <option value="">Roll number</option>
+            {Object.entries(SEAT_ORDERS).filter(([k]) => !['mixed', 'roll', order].includes(k)).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        </label>
+      )}
+      <p className="muted small">{order === 'mixed' ? 'Students of all papers are shuffled together, and two students of the same batch never sit side by side. Reshuffle on the result page gives a new mix.' : `Every student of the test is seated in ${SEAT_ORDERS[order].toLowerCase()} order${!['mixed', 'roll'].includes(order) && settings.seatOrder2 && settings.seatOrder2 !== order ? `, then ${SEAT_ORDERS[settings.seatOrder2].toLowerCase()}` : ''}: the first room fills first, seat 1 onwards, then the next room.`}{['father', 'dob', 'contact'].includes(order) ? ' Needs that column in the admission list; students without it come last.' : ''}</p>
       {COL[settings.seatOrder] && students.length > 0 && (() => {
         const [k, w] = COL[settings.seatOrder];
         const n = students.filter((x) => String(x[k] || '').trim()).length;

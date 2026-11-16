@@ -46,6 +46,10 @@ const labelsOf = (meta) => (meta.slots && meta.slots.length
 const inRoom = (rows, room) => rows.filter((s) => s.Building === room.building && String(s['Room No.']) === String(room.room));
 
 /** One paper's workbook. meta: { title, dateISO, slots: [{ label, start, end }], batchesLabel, modeLabel } */
+// Capacity printed in the sheets is the original one (room.base when the test changed it); the seat layout uses the
+// seats really set for the test
+const capOf = (room) => Number(room.base ?? room.capacity);
+
 export function buildWorkbook(ExcelJS, result, meta) {
   return buildWorkbookAll(ExcelJS, [{ result, meta }], { dateISO: meta.dateISO, dayTitle: meta.title });
 }
@@ -76,7 +80,7 @@ export function buildWorkbookAll(ExcelJS, items, day) {
     head(ws, 1, [...paperCol, 'Building', 'Room No.', 'Seating Capacity', 'Students Allotted']);
     let r = 2;
     for (const p of P) for (const room of p.rooms) {
-      [...(many ? [p.name] : []), room.building, roomVal(room.room), room.capacity, room.used].forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v; style(c); });
+      [...(many ? [p.name] : []), room.building, roomVal(room.room), capOf(room), room.used].forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v; style(c); });
       r++;
     }
     ws.views = [{ state: 'frozen', ySplit: 1 }];
@@ -201,7 +205,7 @@ export function buildWorkbookAll(ExcelJS, items, day) {
       const nrows = Math.ceil(room.capacity / cols);
       const bySeat = {};
       inRoom(p.rows, room).forEach((s) => { bySeat[s['Seat No.']] = s; });
-      titleRow(ws, r++, `${many ? `${p.name} | ` : ''}${room.building} | Room No. ${room.room} | Strength ${room.capacity} | Allotted ${room.used}`, cols,
+      titleRow(ws, r++, `${many ? `${p.name} | ` : ''}${room.building} | Room No. ${room.room} | Strength ${capOf(room)} | Allotted ${room.used}`, cols,
         { bold: true, size: 12, color: C.navy, bg: C.titleFill });
       for (let i = 0; i < cols; i++) { const c = ws.getCell(r, i + 1); c.value = 'Seat / Reg. No.'; style(c, { bold: true, color: C.green, bg: C.headFill }); }
       r++;
@@ -257,7 +261,7 @@ function noticeBoard(ws, papers, meta) {
       for (const room of p.rooms.filter((x) => x.building === b)) {
         const occ = p.rows.filter((s) => s.Building === b && String(s['Room No.']) === String(room.room)).sort((x, y) => naturalCompare(x.Roll_Number, y.Roll_Number));
         const batches = [...new Set(occ.map((s) => s.Batch))].sort().join(', ');
-        [b, roomVal(room.room), room.capacity, occ.length, asNum(occ[0]?.Roll_Number), asNum(occ[occ.length - 1]?.Roll_Number), batches]
+        [b, roomVal(room.room), capOf(room), occ.length, asNum(occ[0]?.Roll_Number), asNum(occ[occ.length - 1]?.Roll_Number), batches]
           .forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v ?? null; style(c); });
         r++;
       }
