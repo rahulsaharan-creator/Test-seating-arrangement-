@@ -11,7 +11,9 @@ function placeThumbs() {
   for (const box of document.querySelectorAll('.seg, .stepper')) {
     const on = box.querySelector(':scope > button.on, :scope > .st.on');
     if (!on || !on.offsetWidth) { box.removeAttribute('data-thumb'); continue; }
-    box.style.setProperty('--x', `${on.offsetLeft}px`);
+    // measured against the control itself (also right when the control scrolls sideways, like the step bar)
+    const x = on.getBoundingClientRect().left - box.getBoundingClientRect().left - box.clientLeft + box.scrollLeft;
+    box.style.setProperty('--x', `${x}px`);
     box.style.setProperty('--w', `${on.offsetWidth}px`);
     if (!box.hasAttribute('data-thumb')) requestAnimationFrame(() => box.setAttribute('data-thumb', ''));
   }
@@ -104,9 +106,9 @@ export function Seats3D() {
   );
 }
 
-// A check mark that draws itself when the seating is ready
-export const DoneMark = () => (
-  <span className="donemark" aria-hidden="true">
-    <svg viewBox="0 0 52 52" width="44" height="44"><circle cx="26" cy="26" r="23" /><path d="M15 27l7 7 15-16" /></svg>
+// A check mark (or, when someone has no seat, an exclamation mark) that draws itself
+export const DoneMark = ({ bad = false }) => (
+  <span className={`donemark ${bad ? 'bad' : ''}`} aria-hidden="true">
+    <svg viewBox="0 0 52 52" width="56" height="56"><circle cx="26" cy="26" r="23" />{bad ? <path d="M26 14v15M26 37v.5" /> : <path d="M15 27l7 7 15-16" />}</svg>
   </span>
 );

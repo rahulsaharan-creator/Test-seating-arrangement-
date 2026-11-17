@@ -91,6 +91,8 @@ const paperTime = (p) => (p.mode === 'Both' ? `Offline ${shiftText(p)} · Online
 const shiftOk = (s) => s.start && s.end && mins(s.end) > mins(s.start);
 
 const Ico = {
+  lab: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>,
+  room: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20V9l8-5 8 5v11" /><path d="M9 20v-6h6v6" /></svg>,
   upload: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 20h16" /></svg>,
   down: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 4v12M7 11l5 5 5-5M4 20h16" /></svg>,
   bin: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" /></svg>,
@@ -574,7 +576,7 @@ export default function App() {
   const landing = !started && !adm;
   const shown = STEPS.filter((s) => s.id !== 'labs' || labsNeeded || step === 'labs');
   const at = Math.max(0, shown.findIndex((s) => s.id === step));
-  const showSide = !landing && !!adm && step !== 'students';
+  const showSide = !landing && !!adm && step !== 'students' && step !== 'result';
   const dir = at < lastAt.current ? 'back' : 'fwd';
   useEffect(() => { lastAt.current = at; }, [at]);
   return (
@@ -664,7 +666,7 @@ export default function App() {
         )}
 
         {step === 'result' && results && (
-          <ResultStep results={results} view={view} setView={setView} metaFor={metaFor} multi={results.length > 1} order={settings.buildingOrder}
+          <ResultStep results={results} metaFor={metaFor} order={settings.buildingOrder} dateISO={test.date}
             reshuffle={async () => { if (await askConfirm('Reshuffle every seat? The current seating is replaced.', 'Reshuffle')) run(Math.floor(Math.random() * 1e9), test.papers); }}
             download={download} downloadBoard={downloadBoard} back={() => setStep('rooms')} />
         )}
@@ -1747,103 +1749,122 @@ function RoomTable({ title, kind, list, edit, use, labs }) {
   );
 }
 
-function ResultStep({ results, view, setView, metaFor, multi, order, reshuffle, download, downloadBoard, back }) {
+// Seating ready: the answer first (does everyone have a seat?), then what to do (download), then where everyone sits.
+// Every seating of the day is on one page: no tabs to click through.
+function RoomCards({ rooms, b }) {
+  return (
+    <div className="rcards">
+      {rooms.map((r) => {
+        const sp = r.occupants.filter((s) => s.Flag).length;
+        const g = r.occupants.filter(isGirl).length;
+        const w = (n) => `${(n / Math.max(r.capacity, 1)) * 100}%`;
+        return (
+          <div className="rcard tilt" key={`${r.kind}${r.room}`} title={`${b} ${r.room}: ${r.used} students, ${g} girls${sp ? `, ${sp} special` : ''}${r.taken ? `, seats 1–${r.taken} used by an overlapping test` : ''}`}>
+            <div className="rc-top"><b>{r.room}</b><span className="num"><b>{r.used}</b> / {r.capacity}</span></div>
+            <div className="rc-bar"><span className="taken" style={{ '--w': w(r.taken) }} /><span className="home" style={{ '--w': w(r.used - sp) }} /><span className="moved" style={{ '--w': w(sp) }} /></div>
+            <span className="rc-s">Seats {r.taken + 1}–{r.taken + r.used}{g ? ` · ${pl(g, 'girl')}` : ''}{sp ? ` · ${sp} special` : ''}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+function SeatingBlock({ x, order, look }) {
+  const result = x.result, online = x.kind === 'Online';
+  const byBuilding = {};
+  for (const r of result.usedRooms.slice().sort((a, b) => order.indexOf(a.building) - order.indexOf(b.building))) (byBuilding[r.building] ||= []).push(r);
+  const name = (x.paper.name || '').replace(/ · (Online|Offline) seating$/, '');
+  return (
+    <div className={`seatblock ${online ? 'on' : 'off'}`}>
+      <div className="sb-head">
+        <span className={`kind ${online ? 'on' : 'off'}`}>{online ? Ico.lab : Ico.room}{online ? 'Online · computer labs' : 'Offline · classrooms'}</span>
+        <b>{name}</b><span className="muted">{paperTime(x.paper)}</span>
+        <span className="grow" />
+        <span className="sb-n"><b className="num">{result.assigned.length.toLocaleString('en-IN')}</b> seated in {pl(result.usedRooms.length, online ? 'lab' : 'room')}{result.unseated.length ? <span className="pill bad">{result.unseated.length} without a seat</span> : null}</span>
+      </div>
+      {look === 'table' ? (
+        <div className="tablewrap">
+          <table className="rtable">
+            <thead><tr><th scope="col">Building</th><th scope="col">{online ? 'Lab' : 'Room'}</th><th scope="col" className="num">Students</th><th scope="col" className="num">Seats</th><th scope="col">Seat numbers</th><th scope="col" className="num">Girls</th><th scope="col" className="num">Special</th></tr></thead>
+            <tbody>{Object.entries(byBuilding).flatMap(([b, rooms]) => rooms.map((r) => (
+              <tr key={`${b}${r.kind}${r.room}`}><td>{b}</td><td><b>{r.room}</b></td><td className="num">{r.used}</td><td className="num">{r.capacity}</td><td className="muted">{r.taken + 1}–{r.taken + r.used}</td>
+                <td className="num">{r.occupants.filter(isGirl).length}</td><td className="num">{r.occupants.filter((s) => s.Flag).length || ''}</td></tr>)))}</tbody>
+          </table>
+        </div>
+      ) : Object.entries(byBuilding).map(([b, rooms]) => (
+        <div className="rbldg" key={b}>
+          <div className="rb-head"><b>{b}</b><span className="muted">{pl(rooms.reduce((a, r) => a + r.used, 0), 'student')}</span></div>
+          <RoomCards rooms={rooms} b={b} />
+        </div>
+      ))}
+    </div>
+  );
+}
+function ResultStep({ results, metaFor, order, reshuffle, download, downloadBoard, back, dateISO }) {
   const [menu, setMenu] = useState(false);
   const [look, setLook] = useState('cards');
-  const x = results[view] || results[0];
-  const result = x.result, meta = metaFor(x);
-  const byBuilding = {};
-  for (const r of result.usedRooms.slice().sort((a, b) => order.indexOf(a.building) - order.indexOf(b.building) || (a.kind === 'Online') - (b.kind === 'Online'))) (byBuilding[r.building] ||= []).push(r);
-  const special = result.assigned.filter((s) => s.Flag).length;
-  const girls = result.assigned.filter(isGirl).length;
-  const unseatedAll = results.reduce((a, y) => a + y.result.unseated.length, 0);
+  const n = (v) => Number(v || 0).toLocaleString('en-IN');
+  const all = results.flatMap((x) => x.result.assigned), unseated = results.flatMap((x) => x.result.unseated);
+  const online = all.filter((s) => s.Mode === 'Online').length, offline = all.length - online;
+  const labs = results.filter((x) => x.kind === 'Online').reduce((a, x) => a + x.result.usedRooms.length, 0);
+  const rooms = results.filter((x) => x.kind !== 'Online').reduce((a, x) => a + x.result.usedRooms.length, 0);
+  const girls = all.filter(isGirl).length, special = all.filter((s) => s.Flag).length, total = all.length + unseated.length;
   const files = results.filter((y) => y.batches.length).length;
+  const warnings = [...new Set(results.flatMap((x) => x.result.warnings))];
+  const overlaps = [...new Set(results.flatMap((x) => x.overlapsWith))];
+  const ok = unseated.length === 0;
+  const times = [...new Set(results.map((x) => paperTime(x.paper)))];
+  const title = ok ? `All ${n(total)} students have a seat` : `${n(unseated.length)} of ${n(total)} students have no seat`;
+  const parts = [online && `${n(online)} online in ${pl(labs, 'lab')}`, offline && `${n(offline)} offline in ${pl(rooms, 'room')}`].filter(Boolean);
+  const hasSpecial = results.some((x) => x.result.usedRooms.some((r) => r.occupants.some((s) => s.Flag)));
+  const hasTaken = results.some((x) => x.result.usedRooms.some((r) => r.taken));
   return (
-    <section>
-      <div className="readyhead"><DoneMark /><span className="kicker">{unseatedAll ? 'Seating ready · check the students without a seat' : 'Seating ready'}</span></div>
-      <Head title={meta.title}
-        lead={`${fmtDateDMY(meta.dateISO)} · ${paperTime(x.paper)} · ${meta.modeLabel}${meta.batchesLabel ? ` · Batches ${meta.batchesLabel}` : ''}`} />
-      {multi && (
-        <div className="slottabs" role="tablist">
-          {results.map((y, i) => (
-            <button key={y.paper.id} role="tab" aria-selected={i === view} className={`${i === view ? 'on' : ''} ${y.result.unseated.length ? 'warn' : ''}`} onClick={() => setView(i)}>
-              <b>{paperName(y.paper, y.index)}</b>
-              <span>{paperTime(y.paper)} · {y.batches.length ? `${y.result.assigned.length} seated${y.result.unseated.length ? ` · ${y.result.unseated.length} no seat` : ''}` : 'no batches'}</span>
-            </button>
-          ))}
+    <section className="result">
+      <div className={`rhero ${ok ? 'ok' : 'bad'}`}>
+        <DoneMark bad={!ok} />
+        <div>
+          <span className="kicker">{fmtDateDMY(dateISO)} · {times.join(' · ')}</span>
+          <h1 className="words">{title.split(' ').map((w, i) => <span key={i} style={{ '--k': i }}>{w} </span>)}</h1>
+          <p className="rsub">{parts.join(' · ')}</p>
         </div>
-      )}
-      {unseatedAll > 0 && (
-        <div className="alert bad"><span><b>{unseatedAll} students have no seat{multi ? ' across the papers' : ''}.</b> They are listed in the Not_Seated sheet with the reason.</span><button className="btn sm" onClick={back}>Fix buildings</button></div>
-      )}
-      {x.overlapsWith.length > 0 && (
-        <div className="alert info"><span>This test overlaps {x.overlapsWith.join(', ')} (or starts less than {GAP} minutes after it). It uses the seats left free in shared rooms, so no seat is used twice at once.</span></div>
-      )}
-      {!x.batches.length && <div className="alert warn"><span>No batches are in this paper. Add them on the Batches step.</span></div>}
-      <div className="actions">
-        <button className="btn cta" onClick={download} disabled={!files}>{Ico.down}Download Excel{multi ? ' (all papers, one file)' : ''}</button>
+      </div>
+      {!ok && <div className="alert bad"><span>They are in the Not_Seated sheet with the reason. Add a building or room and prepare again.</span><button className="btn sm" onClick={back}>Add rooms</button></div>}
+      <div className="ractions">
+        <button className="btn cta xl" onClick={download} disabled={!files} title="Seating plan, student list, attendance, SMD, room layout and master list in one Excel file">{Ico.down}Download seating sheet</button>
+        <button className="btn secondary" onClick={downloadBoard}>Notice board</button>
         <div className="menu">
-          <button className="btn secondary" onClick={() => setMenu(!menu)} aria-expanded={menu}>More ▾</button>
+          <button className="btn ghost" onClick={() => setMenu(!menu)} aria-expanded={menu}>More ▾</button>
           {menu && (
             <div className="menu-list" onMouseLeave={() => setMenu(false)}>
-              <button onClick={() => { setMenu(false); downloadBoard(); }}>Notice board only<small>One sheet for the building entrance</small></button>
               <button onClick={() => { setMenu(false); reshuffle(); }}>Reshuffle seats<small>Every student gets a new seat</small></button>
-              <button onClick={() => { setMenu(false); back(); }}>Change buildings<small>Buildings, rooms, girls, special rooms</small></button>
-              <button onClick={() => { setMenu(false); window.print(); }}>Print this page<small>The seat fill summary</small></button>
+              <button onClick={() => { setMenu(false); back(); }}>Change rooms<small>Buildings, rooms, capacity</small></button>
+              <button onClick={() => { setMenu(false); window.print(); }}>Print this page</button>
             </div>
           )}
         </div>
       </div>
-      <div className="kpis">
-        <div><b><Num v={result.assigned.length} from0 /></b><span>of {x.students} seated</span></div>
-        <div><b><Num v={result.usedRooms.length} from0 /></b><span>rooms used</span></div>
-        <div><b><Num v={girls} from0 /></b><span>girls seated</span></div>
-        <div><b><Num v={special} from0 /></b><span>monitoring, due fee, top</span></div>
-        <div><b>{shiftsOf(x.paper).length}</b><span>{shiftsOf(x.paper).length > 1 ? 'attendance sheets (one per shift)' : 'attendance sheet'}</span></div>
+      <div className="kpis rk">
+        <div><b><Num v={all.length} from0 /></b><span>seated</span></div>
+        {online > 0 && <div><b><Num v={online} from0 /></b><span>online · {pl(labs, 'lab')}</span></div>}
+        {offline > 0 && <div><b><Num v={offline} from0 /></b><span>offline · {pl(rooms, 'room')}</span></div>}
+        <div><b><Num v={girls} from0 /></b><span>girls</span></div>
+        {special > 0 && <div><b><Num v={special} from0 /></b><span>monitoring, due fee, top</span></div>}
       </div>
-      {result.warnings.map((w) => <div key={w} className="alert warn"><span>{w}</span></div>)}
-
-      <details className="fold" open>
-        <summary>Rooms <span className="muted">· {result.usedRooms.length} used</span></summary>
+      {(warnings.length > 0 || overlaps.length > 0) && (
+        <ul className="rchecks">
+          {warnings.map((w) => <li key={w} className="warn">{w}</li>)}
+          {overlaps.length > 0 && <li className="info">Shares rooms with {overlaps.join(', ')} at the same time: only the free seats were used.</li>}
+        </ul>
+      )}
+      <div className="rwhere">
+        <h2>Where everyone sits</h2>
+        <span className="legend"><i className="home" />This test{hasSpecial && <><i className="moved" />Monitoring, due fee, top</>}{hasTaken && <><i className="taken" />Another test</>}</span>
+        <span className="grow" />
         <div className="seg sm viewseg" role="group" aria-label="Show rooms as">
           {[['cards', 'Cards'], ['table', 'Table']].map(([k, l]) => <button key={k} className={look === k ? 'on' : ''} aria-pressed={look === k} onClick={() => setLook(k)}>{l}</button>)}
         </div>
-        {look === 'table' && (
-          <div className="tablewrap">
-            <table className="rtable">
-              <thead><tr><th scope="col">Building</th><th scope="col">Room</th><th scope="col">Type</th><th scope="col" className="num">Students</th><th scope="col" className="num">Capacity</th><th scope="col">Seats</th><th scope="col" className="num">Girls</th><th scope="col" className="num">Special</th></tr></thead>
-              <tbody>
-                {Object.entries(byBuilding).flatMap(([b, rooms]) => rooms.map((r) => (
-                  <tr key={`${b}${r.kind}${r.room}`}>
-                    <td>{b}</td><td><b>{r.room}</b></td><td className="muted">{r.kind === 'Online' ? 'Lab' : 'Classroom'}</td>
-                    <td className="num">{r.used}</td><td className="num">{r.capacity}</td><td className="muted">{r.taken + 1}–{r.taken + r.used}</td>
-                    <td className="num">{r.occupants.filter(isGirl).length}</td><td className="num">{r.occupants.filter((s) => s.Flag).length || ''}</td>
-                  </tr>
-                )))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {look === 'cards' && Object.entries(byBuilding).map(([b, rooms]) => (
-          <div className="rbldg" key={b}>
-            <div className="rb-head"><b>{b}</b><span className="muted">{pl(rooms.reduce((a, r) => a + r.used, 0), 'student')} · {pl(rooms.length, 'room')}</span></div>
-            <div className="rcards">
-              {rooms.map((r) => {
-                const sp = r.occupants.filter((s) => s.Flag).length;
-                const g = r.occupants.filter(isGirl).length;
-                const w = (n) => `${(n / r.capacity) * 100}%`;
-                return (
-                  <div className="rcard tilt" key={`${r.kind}${r.room}`} title={`${b} ${r.room}: ${r.used} students, ${g} girls${sp ? `, ${sp} special` : ''}${r.taken ? `, seats 1–${r.taken} used by an overlapping paper` : ''}`}>
-                    <div className="rc-top"><b>{r.room}</b><span>{r.used}/{r.capacity}</span></div>
-                    <div className="rc-bar"><span className="taken" style={{ '--w': w(r.taken) }} /><span className="home" style={{ '--w': w(r.used - sp) }} /><span className="moved" style={{ '--w': w(sp) }} /></div>
-                    <span className="muted small">Seats {r.taken + 1}–{r.taken + r.used} · {pl(g, 'girl')}{sp ? ` · ${sp} special` : ''}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-      </details>
+      </div>
+      {results.map((x) => <SeatingBlock key={x.paper.id} x={x} order={order} look={look} />)}
     </section>
   );
 }
