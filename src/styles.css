@@ -433,3 +433,8 @@ textarea { height: auto; padding: 10px 12px; width: 100%; resize: vertical; }
   .rtable tr { break-inside: avoid; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* The only heading left is the seating name on the result page: keep it modest */
+.head { margin-bottom: 24px; }
+.head h1 { font-size: 28px; }
+.head .lead { font-size: 15px; }

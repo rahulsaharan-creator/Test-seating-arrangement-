@@ -605,8 +605,6 @@ export default function App() {
 
         {step === 'students' && (
           <section>
-            <Head kicker="Step 1" title="Upload the admission list" lead="The Excel file with every student. Only students marked Active are used. Files are read inside this browser and are never uploaded anywhere." />
-            {!adm && <Guide />}
             <FileCard title="Admission list" hint="Columns: Roll_Number, Student_Name, Gender, Course, Batch, Medium, Status"
               loaded={adm && <><b>{adm.fileName}</b><span>{pl(adm.students.length, 'active student')} · {pl(batches.length, 'batch')}{adm.inactive ? ` · ${adm.inactive} inactive left out` : ''}{adm.duplicates ? ` · ${adm.duplicates} duplicate rolls skipped` : ''}</span></>}
               onFile={onAdmission} onRemove={removeAdmission} template={() => downloadTemplate('admission')} big />
@@ -615,8 +613,7 @@ export default function App() {
               loaded={<><b>{settings.roomFile || 'Built-in list'}</b><span>{pl(settings.rooms.length, 'room')} · {pl(settings.labs.length, 'lab')} · {labSeats} lab seats</span></>}
               onFile={onRoomFile} template={() => downloadTemplate('rooms')} />
             <details className="fold">
-              <summary>Monitoring and due fee students <span className="muted">· optional · {lists.Monitoring.length} monitoring, {lists['Due fee'].length} due fee</span></summary>
-              <p className="muted">Upload or paste their roll numbers, then pick the rooms where they sit. They are seated in these rooms first; other students fill the free seats only after every other room is full. A student on both lists is seated once, with the due fee students.</p>
+              <summary>Monitoring and due fee students <span className="muted">· {lists.Monitoring.length} monitoring, {lists['Due fee'].length} due fee</span></summary>
               {(() => { const dueSet = new Set(lists['Due fee']); const both = lists.Monitoring.filter((r) => dueSet.has(r)).length; return both ? <p className="small warnt">{pl(both, 'student')} on both lists: seated with the due fee students only.</p> : null; })()}
               {['Monitoring', 'Due fee'].map((f) => (
                 <div className="card special" key={f}>
@@ -634,8 +631,7 @@ export default function App() {
               <SeatRules settings={settings} setSettings={setSettings} students={adm?.students || []} />
             </details>
             <details className="fold">
-              <summary>Phase list <span className="muted">· optional · {settings.phaseText ? 'pasted list in use' : 'phases from batch codes (XA1, XA2 → XA)'}</span></summary>
-              <p className="muted">Paste the course and phase list from the Counselling Planner, one phase per line: Course | Phase | Batches. Batches not in the list are grouped by their batch code. Saved in this browser.</p>
+              <summary>Phase list {settings.phaseText ? <span className="muted">· in use</span> : null}</summary>
               <textarea rows="5" placeholder={'Momentum | XA | XA1, XA2, XA3\nMomentum | XB | XB1, XB2'} value={settings.phaseText || ''}
                 onChange={(e) => setSettings((s) => ({ ...s, phaseText: e.target.value }))} aria-label="Phase list" />
               {phaseList.issues.map((x) => <p key={x} className="muted small bad">{x}</p>)}
@@ -683,7 +679,6 @@ export default function App() {
         </aside>
       )}
       </div>}
-      <footer className="foot">Matrix Academy, Sikar · Operations · Student data stays in this browser</footer>
       <ConfirmHost />
     </div>
   );
@@ -693,13 +688,7 @@ export default function App() {
 function Landing({ go }) {
   return (
     <section className="landing">
-      <span className="kicker">Matrix Academy · Operations</span>
-      <h1 className="hero">Test seating, ready in minutes.</h1>
-      <p className="lead">Upload the admission list, set up the test, and download the finished seating sheet. Student data never leaves this browser.</p>
       <button className="btn primary lg" onClick={go} autoFocus>Create Seating Plan</button>
-      <ol className="land-steps" aria-label="How it works">
-        {['Admission list', 'Test & papers', 'Online / Offline', 'Labs and rooms', 'Download'].map((x, i) => <li key={x}><i>{i + 1}</i>{x}</li>)}
-      </ol>
     </section>
   );
 }
@@ -758,20 +747,6 @@ function Head({ kicker, title, lead }) {
   );
 }
 
-function Guide() {
-  return (
-    <div className="guide">
-      <div><span className="kicker">First time here?</span><h2>Seating sheet in four steps</h2></div>
-      <ol>
-        <li><i>1</i><b>Admission list</b><span>Upload the admission list. Optional: monitoring and due fee students with their rooms, and seating rules.</span></li>
-        <li><i>2</i><b>Test and papers</b><span>Date, courses, then each paper: name, shifts, phases and batches.</span></li>
-        <li><i>3</i><b>Online / Offline</b><span>Online or offline for each paper or batch, and the top batches. Create seating: labs and buildings are picked for you.</span></li>
-        <li><i>4</i><b>Seating</b><span>Check the labs and rooms, then download the Excel file.</span></li>
-      </ol>
-    </div>
-  );
-}
-
 function FileCard({ title, hint, loaded, onFile, onRemove, template, big }) {
   const [over, setOver] = useState(false);
   const inp = useRef(null);
@@ -782,7 +757,7 @@ function FileCard({ title, hint, loaded, onFile, onRemove, template, big }) {
       <span className="fc-ic">{Ico.file}</span>
       <div className="fc-body">
         <b className="fc-title">{title}</b>
-        {loaded ? <div className="fc-stat">{loaded}</div> : <span className="muted">Drop the .xlsx file here, or click Upload. {hint}</span>}
+        {loaded ? <div className="fc-stat">{loaded}</div> : <span className="muted">.xlsx</span>}
       </div>
       <div className="fc-act">
         <button type="button" className={`btn ${loaded ? 'ghost' : 'primary'}`} onClick={() => inp.current.click()}>{Ico.upload}{loaded ? 'Replace' : 'Upload'}</button>
@@ -829,7 +804,6 @@ function PaperStep({ part = 'setup', setupReady, goMode, goTest, test, setTest, 
     const notYet = test.papers.map((p, i) => [p, i]).filter(([p]) => !setupReady(p));
     return (
       <section>
-        <Head kicker="Step 3" title="Online or offline?" lead={kind === 'RPT' ? 'Choose online or offline, then the times and shifts. Tick ★ on a batch to make it a top batch. Create seating picks the labs and buildings for you.' : 'For each paper choose Online, Offline or Both. With Both, mark each batch, or single students. Tick Top for batches that sit first. Create seating picks the labs and buildings for you.'} />
         <div className="papers">{ready.map(([p, i]) => cardOf(p, i))}</div>
         {notYet.length > 0 && <div className="alert info"><span>{notYet.map(([p, i]) => `Test ${i + 1}`).join(', ')} {notYet.length > 1 ? 'are' : 'is'} not set up yet.</span><button className="btn sm" onClick={goTest}>Finish on Test & papers</button></div>}
         <Nav back={back} />
@@ -839,7 +813,6 @@ function PaperStep({ part = 'setup', setupReady, goMode, goTest, test, setTest, 
   const removePaper = (id) => setTest({ ...test, papers: test.papers.filter((p) => p.id !== id) });
   return (
     <section>
-      <Head kicker="Step 2" title="Test and papers" lead="Pick the date and the courses. Then set up each paper: name, 1 or 2 shifts, phases and batches. Online or offline comes next." />
       <div className="card form">
         <label className="field">
           <span>Test date</span>
@@ -1045,10 +1018,6 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
               <button className={!byLabs ? 'on' : ''} onClick={() => apply({ fill: 'equal' })}>About equal students at each time</button>
             </div>
           )}
-          <p className="muted small">{byLabs
-            ? `Each time gets as many students as there are lab seats (${labSeats}), in phase and batch order. The students left over go to the next time; a batch is split between two times when it does not fit.`
-            : 'Every batch is placed whole in one time, keeping the number of students at each time about equal.'}
-            {' '}Take a batch out of a time with ×, or put a batch at a time with Add a batch.{r.mode !== 'Offline' ? ' Tick ★ on a batch to make it a top batch: its students take lab seats first.' : ''}</p>
           <label className="small"><input type="checkbox" checked={r.noGirlsLast !== false} onChange={(e) => apply({ noGirlsLast: e.target.checked })} /> No girls in the last time (batches with girls go to the earlier times)</label>
           {r.noGirlsLast !== false && !anyGirls && <p className="small bad">The admission list has no girls marked (no Gender values), so this rule cannot work.</p>}
           {manual && <p className="small">You moved batches by hand. <button className="link" onClick={() => apply({ pins: {}, outs: {} })}>Undo my changes</button></p>}
@@ -1077,7 +1046,7 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
                         );
                       })}
                     </div>
-                    {Object.keys(s.parts || {}).length > 0 && <p className="muted small">“1 to 10” means the first 10 students of the batch in roll-number order; the rest sit at another time.</p>}
+                    
                     {over > 0 && <p className="small bad">{pl(over, 'student')} more than the lab seats (batches added by hand). Add lab seats, or take a batch out.</p>}
                     <SeatBoard s={sumSlot(p, s)} mode={r.mode} />
                   </>
@@ -1192,7 +1161,6 @@ function PaperCard({ part = 'setup', p, i, n, setPaper, setSlot, remove, courses
       {part === 'setup' && p.courses.length > 0 && (
         <div className="q">
           <b className="q-l">2. Papers</b>
-          <p className="muted small">For each paper: its name, 1 or 2 shifts, its phases, then the batches of those phases.</p>
           {p.slots.map((s, k) => (
             <PaperBox key={s.id} p={p} s={s} k={k} setPaper={setPaper} setSlot={setSlot} phases={phases} ownerOf={ownerOf} slotOf={slotOf}
               pb={phaseBatches(s)} studentsByBatch={studentsByBatch} studentMode={studentMode} setStudentMode={setStudentMode}
@@ -1209,7 +1177,7 @@ function PaperCard({ part = 'setup', p, i, n, setPaper, setSlot, remove, courses
           <button className="btn cta" onClick={start}>{Ico.spark}{p.done ? 'Change seating for this test' : 'Create seating for this test'}</button>
         </div>
       )}
-      {part === 'mode' && !ok && <p className="muted small paper-cta">Choose online or offline for every paper to create the seating.</p>}
+      {part === 'mode' && !ok && <p className="muted small paper-cta">Pick online or offline for every paper.</p>}
     </div>
   );
 }
@@ -1228,7 +1196,7 @@ function ModeBox({ p, s, k, setSlot, studentsByBatch, studentMode, setStudentMod
           <button key={m} className={s.mode === m ? 'on' : ''} aria-pressed={s.mode === m} onClick={() => set({ mode: m })}>{l}</button>
         ))}
       </div>
-      {!s.mode && <p className="muted small">Choose one to continue.</p>}
+      
       <div className="batch-grid">
         {s.batches.map((b) => {
           const on = s.online.includes(b);
@@ -1263,7 +1231,6 @@ function TopSeats({ p, setPaper, labs, blds }) {
   return (
     <div className="q topseats">
       <b className="q-l">Top batches sit first in</b>
-      <p className="muted small">Top batches of this test: {(p.top || []).join(', ')}. Pick labs for their online students and buildings for their offline students. They are seated there before anyone else; other students fill the seats left. Nothing picked: top batch students simply take lab seats first.</p>
       {labs.length > 0 && <div className="chips"><span className="small muted">Labs</span>{labs.map((l) => { const k = roomKey(l); return <button key={k} type="button" className={`chip-btn ${tl.includes(k) ? 'on' : ''}`} onClick={() => tog('topLabs', tl, k)}>{l.building} · {l.room} <small>{l.capacity}</small></button>; })}</div>}
       <div className="chips"><span className="small muted">Buildings</span>{blds.map((b) => <button key={b} type="button" className={`chip-btn ${tb.includes(b) ? 'on' : ''}`} onClick={() => tog('topBlds', tb, b)}>{b}</button>)}</div>
     </div>
@@ -1297,7 +1264,6 @@ function PaperBox({ p, s, k, setPaper, setSlot, phases, ownerOf, slotOf, pb, stu
           <TimeRow label={s.two ? 'Shift 1' : 'Time'} value={s} onChange={(v) => set(v)} />
           {s.two && <TimeRow label="Shift 2" value={s.s2} onChange={(v) => set({ s2: v })} />}
           {s.two && mins(s.s2.start) < mins(s.end) && <p className="muted small bad">Shift 2 must start after Shift 1 ends.</p>}
-          {s.two && <p className="note small">Same students, same seat in both shifts. The attendance sheet gets a signature column for each shift.</p>}
         </div>
       </div>
 
@@ -1323,7 +1289,7 @@ function PaperBox({ p, s, k, setPaper, setSlot, phases, ownerOf, slotOf, pb, stu
                 );
               })}
             </div>
-            {shown.some((g) => freeIn(g).length && freeIn(g).length < g.batches.length) && <p className="muted small">“x of y”: the phase has batches in another paper; only its free batches can be ticked here.</p>}
+            
           </div>
         );
       })()}
@@ -1331,7 +1297,7 @@ function PaperBox({ p, s, k, setPaper, setSlot, phases, ownerOf, slotOf, pb, stu
       {s.phases.length > 0 && (
         <div className="q">
           <b className="q-l">c. Batches</b>
-          <p className="muted small">Batches of the phases picked above. <button className="link" onClick={() => set({ batches: free.map((b) => b.batch) })}>Tick all</button> · <button className="link" onClick={() => set({ batches: [], online: [] })}>Clear</button></p>
+          <p className="muted small"><button className="link" onClick={() => set({ batches: free.map((b) => b.batch) })}>Tick all</button> · <button className="link" onClick={() => set({ batches: [], online: [] })}>Clear</button></p>
           <div className="batch-grid">
             {pb.map((b) => {
               const where = slotOf[b.batch];
@@ -1408,7 +1374,6 @@ function LabStep({ p, idx, labsOn, order, setSlot: setOne, planOf, girlsOf, topL
   const blds = Object.keys(groups).sort((a, b) => order.indexOf(a) - order.indexOf(b));
   return (
     <section>
-      <Head kicker={`Test ${idx + 1}: ${p.courses.join(', ')}`} title="Online seating: which labs?" lead="Tick the computer labs for the online batches. Labs fill in the order shown, one lab completely before the next. Top batch students are seated first. Online students left without a lab seat sit offline." />
       {slots.map((s) => {
         const need = planOf(s).c.online;
         const mine = p.slots.filter((x) => (planOf(s).ids || []).includes(x.id)).flatMap((x) => x.labs || []);
@@ -1481,7 +1446,6 @@ function RoomStep({ p, idx, settings, setSettings, setSlot: setOne, planOf, room
   const slots = p.slots.filter((s) => s.batches.length && planOf(s).first === s.id && planOf(s).offNeed > 0);
   return (
     <section>
-      <Head kicker={`Test ${idx + 1}: ${p.courses.join(', ')}`} title="Offline seating: buildings and rooms" lead="Tick the buildings for the offline students. Every room of a ticked building is used; open Choose rooms to leave a room out or change its capacity. All papers of this test are seated together. Seats another test fills at the same time are shown as used." />
       {slots.map((s) => {
         const pl0 = planOf(s);
         const need = pl0.offNeed;
@@ -1590,7 +1554,6 @@ function RoomStep({ p, idx, settings, setSettings, setSlot: setOne, planOf, room
         </ol>
         <RoomTable title="Classrooms (offline)" kind="rooms" list={settings.rooms} edit={editRoom} use={settings.buildingOrder} />
         <RoomTable title="Computer labs (online)" kind="labs" list={settings.labs} edit={editRoom} use={settings.buildingOrder} labs />
-        <p className="muted">To load a new room list, go back to step 1.</p>
         <button className="btn ghost danger" onClick={async () => { if (await askConfirm('Reset buildings, rooms, capacities, girls settings and groups to the built-in lists?', 'Reset', true)) setSettings(freshSettings()); }}>{Ico.bin}Reset to built-in lists</button>
       </details>
       <div className="ctabar">
@@ -1633,7 +1596,7 @@ function CapacityTool({ buildings, roomsIn, inUse, adjustCap }) {
         <button className="btn ghost sm" disabled={num === '' || !pick.length} onClick={() => { each('num', Number(num)); setNum(''); }}>Add seats</button>
         {pick.length > 0 && seats !== base && <button className="link small" onClick={() => each('reset')}>Reset</button>}
       </div>
-      <span className="muted small">A minus number removes seats. Other tests keep the normal capacity.</span>
+      
     </div>
   );
 }
@@ -1659,14 +1622,13 @@ function SeatRules({ settings, setSettings, students }) {
           </select>
         </label>
       )}
-      <p className="muted small">{order === 'mixed' ? 'Students of all papers are shuffled together, and two students of the same batch never sit side by side. Reshuffle on the result page gives a new mix.' : `Every student of the test is seated in ${SEAT_ORDERS[order].toLowerCase()} order${!['mixed', 'roll'].includes(order) && settings.seatOrder2 && settings.seatOrder2 !== order ? `, then ${SEAT_ORDERS[settings.seatOrder2].toLowerCase()}` : ''}: the first room fills first, seat 1 onwards, then the next room.`}{['father', 'dob', 'contact'].includes(order) ? ' Needs that column in the admission list; students without it come last.' : ''}</p>
       {COL[settings.seatOrder] && students.length > 0 && (() => {
         const [k, w] = COL[settings.seatOrder];
         const n = students.filter((x) => String(x[k] || '').trim()).length;
         return n < students.length ? <p className="small bad">{n === 0 ? `The admission list has no ${w} column (or it is empty), so seats would follow roll numbers. Add a ${k} column.` : `${students.length - n} students have no ${w}; they are seated last.`}</p> : <p className="muted small">{w[0].toUpperCase() + w.slice(1)} found for all {students.length} students.</p>;
       })()}
       <label className="small"><input type="checkbox" checked={!!settings.apart} onChange={(e) => setSettings((x) => ({ ...x, apart: e.target.checked }))} /> Keep brothers and sisters apart (same father's name or same contact number never side by side)</label>
-      <p className="muted small"><b>SMD sheet groups (CB column)</b> · {groups.length ? pl(groups.length, 'group') : 'by first letter of the batch'}. Batches not in a group are counted by the first letter of the batch (X-Phase, Y-Phase…).</p>
+      <p className="small"><b>SMD sheet groups</b></p>
       {groups.map((g, i) => (
         <div className="group-row" key={i}>
           <input type="text" placeholder="Group name, e.g. Momentum XA" value={g.name} onChange={(e) => setGroups(groups.map((y, j) => (j === i ? { ...y, name: e.target.value } : y)))} aria-label="Group name" />
@@ -1792,7 +1754,7 @@ function ResultStep({ results, view, setView, metaFor, multi, order, reshuffle, 
   const files = results.filter((y) => y.batches.length).length;
   return (
     <section>
-      <Head kicker={multi ? `Seating ready · ${pl(results.length, 'seating')}` : 'Seating ready'} title={meta.title}
+      <Head title={meta.title}
         lead={`${fmtDateDMY(meta.dateISO)} · ${paperTime(x.paper)} · ${meta.modeLabel}${meta.batchesLabel ? ` · Batches ${meta.batchesLabel}` : ''}`} />
       {multi && (
         <div className="slottabs" role="tablist">
@@ -1855,7 +1817,6 @@ function ResultStep({ results, view, setView, metaFor, multi, order, reshuffle, 
             </table>
           </div>
         )}
-        {look === 'cards' && <p className="muted small">Green: students of this test (all its papers). Amber: monitoring, due fee or top batch students.{x.overlapsWith.length ? ' Grey: seats used by an overlapping test.' : ''}</p>}
         {look === 'cards' && Object.entries(byBuilding).map(([b, rooms]) => (
           <div className="rbldg" key={b}>
             <div className="rb-head"><b>{b}</b><span className="muted">{pl(rooms.reduce((a, r) => a + r.used, 0), 'student')} · {pl(rooms.length, 'room')}</span></div>
@@ -1876,7 +1837,6 @@ function ResultStep({ results, view, setView, metaFor, multi, order, reshuffle, 
           </div>
         ))}
       </details>
-      <p className="muted small">One Excel file{multi ? ' for every paper' : ''}: Raw_Data, Student_list, Seating Arrangement, Attendance (every room{multi ? ', paper' : ''} and shift), SMD, Room_Layout, Master_List{unseatedAll ? ', Not_Seated' : ''}.{multi ? ' Each sheet has a Paper column or a block per paper.' : ''}</p>
     </section>
   );
 }
