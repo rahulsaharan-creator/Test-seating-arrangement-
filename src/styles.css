@@ -438,3 +438,104 @@ textarea { height: auto; padding: 10px 12px; width: 100%; resize: vertical; }
 .head { margin-bottom: 24px; }
 .head h1 { font-size: 28px; }
 .head .lead { font-size: 15px; }
+
+/* ===== Motion and depth (Apple-style). Only transform and opacity animate; all of it stops for reduced motion. ===== */
+:root { --spring: cubic-bezier(.32,.72,0,1); }
+
+/* header gains a hairline once the page scrolls */
+.top { transition: box-shadow .3s var(--ease); }
+.top[data-scrolled] { box-shadow: 0 1px 0 var(--line2), 0 8px 24px -16px rgba(0,0,0,.18); }
+
+/* segmented controls and the step bar: a thumb that glides to the selected item */
+.seg[data-thumb], .stepper[data-thumb] { position: relative; isolation: isolate; }
+.seg[data-thumb]::before, .stepper[data-thumb]::before {
+  content: ""; position: absolute; z-index: -1; top: 3px; bottom: 3px; left: 0; width: var(--w); transform: translateX(var(--x));
+  border-radius: 999px; background: var(--card); box-shadow: 0 1px 3px rgba(0,0,0,.12), 0 1px 1px rgba(0,0,0,.04);
+  transition: transform .45s var(--spring), width .45s var(--spring);
+}
+.seg[data-thumb] button.on { background: transparent; box-shadow: none; }
+.stepper[data-thumb]::before { top: 4px; bottom: 4px; background: var(--card2); box-shadow: none; }
+.stepper { position: relative; }
+@media (prefers-color-scheme: dark) { .seg[data-thumb]::before { background: var(--card3); } }
+
+/* steps slide in from the side you are travelling to */
+.main.dir-fwd > section { animation: slideL .42s var(--spring) both; }
+.main.dir-back > section { animation: slideR .42s var(--spring) both; }
+@keyframes slideL { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+@keyframes slideR { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+
+/* cards rise in as they come into view, one after another */
+[data-rv="0"] { opacity: 0; transform: translateY(18px) scale(.985); }
+[data-rv="1"] { opacity: 1; transform: none; transition: opacity .6s var(--ease) var(--d, 0ms), transform .7s var(--spring) var(--d, 0ms); }
+
+/* pressing feels physical */
+.btn, .chip-btn, .seg button, .st, .addslot, .iconbtn, .pbtn { transition: transform .18s var(--ease), background .2s var(--ease), color .2s var(--ease), box-shadow .2s var(--ease); }
+.btn:active:not(:disabled), .chip-btn:active:not(:disabled), .addslot:active, .iconbtn:active:not(:disabled) { transform: scale(.96); }
+.chip-btn.on, .batch.on, .lab-row.on, .bld-chip.on { animation: pop .32s var(--spring); }
+@keyframes pop { 0% { transform: scale(.94); } 60% { transform: scale(1.03); } 100% { transform: scale(1); } }
+.btn.primary, .btn.cta { position: relative; overflow: hidden; }
+.btn.primary::after, .btn.cta::after { content: ""; position: absolute; inset: 0; background: linear-gradient(110deg, transparent 30%, rgba(255,255,255,.22) 50%, transparent 70%); transform: translateX(-120%); }
+.btn.primary:hover:not(:disabled)::after, .btn.cta:hover:not(:disabled)::after { transform: translateX(120%); transition: transform .8s var(--ease); }
+
+/* cards lift a little under the pointer; room cards lean in 3D */
+.filecard, .card, .kpis > div, .slottabs button { transition: box-shadow .3s var(--ease), transform .3s var(--spring); }
+.filecard.loaded:hover, .slottabs button:hover { box-shadow: 0 2px 4px rgba(0,0,0,.04), 0 16px 32px -12px rgba(0,0,0,.18); transform: translateY(-2px); }
+.rcards { perspective: 900px; }
+.tilt { transform-style: preserve-3d; transform: rotateX(var(--rx, 0)) rotateY(var(--ry, 0)); transition: transform .5s var(--spring), box-shadow .3s var(--ease); }
+.tilt[data-tilting] { transition: transform .08s linear, box-shadow .3s var(--ease); box-shadow: 0 18px 36px -14px rgba(0,0,0,.28); }
+/* seat-fill bars grow in */
+.rc-bar span { width: var(--w); animation: grow .9s var(--spring) both; transform-origin: left; }
+@keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* dialogs and the summary sheet: spring in */
+.modal { animation: modalIn .42s var(--spring) both; }
+@keyframes modalIn { from { opacity: 0; transform: translateY(14px) scale(.96); } to { opacity: 1; transform: none; } }
+.progress span { transition: width .6s var(--spring); }
+
+/* seating ready: a check that draws itself */
+.readyhead { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.donemark svg { display: block; fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.donemark circle { stroke-dasharray: 145; stroke-dashoffset: 145; animation: draw .7s var(--ease) .1s forwards; opacity: .35; }
+.donemark path { stroke-dasharray: 40; stroke-dashoffset: 40; animation: draw .45s var(--spring) .65s forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.readyhead .kicker { color: var(--accent); }
+
+/* ===== Start screen: a classroom in 3D ===== */
+.landing { gap: 40px; min-height: calc(100vh - 90px); overflow: hidden; }
+.seats3d { --tx: 56deg; --tz: -32deg; width: min(560px, 90vw); height: 340px; perspective: 1100px; display: grid; place-items: center; animation: float 6s ease-in-out infinite; }
+@keyframes float { 50% { transform: translateY(-8px); } }
+.stage { position: relative; width: 360px; height: 280px; transform-style: preserve-3d; transform: rotateX(var(--tx)) rotateZ(var(--tz)); transition: transform 1.2s var(--spring); }
+.floor { position: absolute; inset: -26px; border-radius: 28px; background: linear-gradient(135deg, var(--card), var(--card2)); box-shadow: 0 40px 80px -30px rgba(0,0,0,.35), inset 0 0 0 1px var(--line2); transform: translateZ(-1px); }
+.desk { position: absolute; left: 110px; right: 110px; top: -18px; height: 12px; border-radius: 6px; background: var(--ink2); transform: translateZ(10px); box-shadow: 0 8px 0 -2px rgba(0,0,0,.25); }
+.seat {
+  position: absolute; width: 28px; height: 22px; left: calc(var(--c) * 38px + 8px); top: calc(var(--r) * 36px + 20px);
+  border-radius: 7px; background: var(--card3); box-shadow: 0 0 0 1px var(--line), 0 6px 0 -1px var(--line);
+  transform: translateZ(2px); animation: fill 4.8s var(--spring) infinite; animation-delay: calc(var(--i) * 90ms);
+}
+.seat.girl { --fill: var(--navy); }
+@keyframes fill {
+  0%, 12% { transform: translateZ(2px); background: var(--card3); box-shadow: 0 0 0 1px var(--line), 0 6px 0 -1px var(--line); }
+  26%, 72% { transform: translateZ(16px); background: var(--fill, var(--accent)); box-shadow: 0 0 0 1px transparent, 0 16px 14px -6px rgba(0,0,0,.35); }
+  90%, 100% { transform: translateZ(2px); background: var(--card3); box-shadow: 0 0 0 1px var(--line), 0 6px 0 -1px var(--line); }
+}
+.landing .btn.lg { box-shadow: 0 18px 40px -16px rgba(0,0,0,.45); }
+@media (max-width: 760px) { .seats3d { height: 260px; } .stage { width: 300px; height: 240px; } .seat { left: calc(var(--c) * 31px + 6px); top: calc(var(--r) * 30px + 16px); width: 23px; height: 18px; } }
+
+/* ===== UI refinements ===== */
+.main > section > .head h1, .readyhead + .head h1 { letter-spacing: -.035em; }
+.kpis > div b { font-variant-numeric: tabular-nums; }
+.tile-v { font-variant-numeric: tabular-nums; }
+.sumbox .tile { transition: box-shadow .3s var(--ease), transform .3s var(--spring); }
+.sumbox .tile:hover { transform: translateY(-1px); box-shadow: 0 2px 4px rgba(0,0,0,.04), 0 12px 24px -12px rgba(0,0,0,.16); }
+.rcard { background: var(--card); box-shadow: var(--sh); }
+.batch { transition: background .2s var(--ease), box-shadow .25s var(--ease), transform .25s var(--spring); }
+.batch:hover { transform: translateY(-1px); }
+::selection { background: var(--accent-soft); color: var(--ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  [data-rv] { opacity: 1 !important; transform: none !important; }
+  .seats3d, .seat, .rc-bar span, .donemark circle, .donemark path { animation: none !important; }
+  .donemark circle, .donemark path { stroke-dashoffset: 0; }
+  .tilt { transform: none !important; }
+}
+@media print { [data-rv] { opacity: 1 !important; transform: none !important; } .tilt { transform: none !important; } .readyhead { display: none; } }

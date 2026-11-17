@@ -4,6 +4,7 @@ import { allocate, capacity, naturalCompare, isGirl, roomKey, FLAGS, SEAT_ORDERS
 import { buildWorkbookAll, buildNoticeBoard, fmtDateDMY, fmtTime } from './lib/exporter.js';
 import { readAdmissions, readRooms, readRollList, parseRolls } from './lib/readers.js';
 import { parsePhaseList, groupPhases, seatSummary, fillPreview, rptFill } from './lib/plan.js';
+import { useMotion, Num, Seats3D, DoneMark } from './motion.jsx';
 
 const loadExcel = () => import('exceljs').then((m) => m.default || m);
 const STORE = 'seating-settings-v1';
@@ -168,6 +169,8 @@ export default function App() {
   const [view, setView] = useState(0);
   const [started, setStarted] = useState(false);
   const [sumOpen, setSumOpen] = useState(false);
+  const lastAt = useRef(0);
+  useMotion();
 
   useEffect(() => {
     try { localStorage.setItem(STORE, JSON.stringify(settings)); } catch { /* ignore */ }
@@ -572,6 +575,8 @@ export default function App() {
   const shown = STEPS.filter((s) => s.id !== 'labs' || labsNeeded || step === 'labs');
   const at = Math.max(0, shown.findIndex((s) => s.id === step));
   const showSide = !landing && !!adm && step !== 'students';
+  const dir = at < lastAt.current ? 'back' : 'fwd';
+  useEffect(() => { lastAt.current = at; }, [at]);
   return (
     <div className="app">
       <header className="top">
@@ -598,7 +603,7 @@ export default function App() {
 
       {landing && <Landing go={() => { setStarted(true); setStep('students'); }} />}
       {!landing && <div className={`shell ${showSide ? 'with-side' : ''}`}>
-      <main className="main">
+      <main className={`main dir-${dir}`}>
         {error && <div className="alert bad" role="alert"><span>{error}</span><button className="link" onClick={() => setError('')}>Dismiss</button></div>}
         {notice && !error && <div className="alert info"><span>{notice}</span><button className="link" onClick={() => setNotice('')}>OK</button></div>}
         {busy && <div className="busy" role="status"><span className="spin" aria-hidden="true" />{busy}</div>}
@@ -688,6 +693,7 @@ export default function App() {
 function Landing({ go }) {
   return (
     <section className="landing">
+      <Seats3D />
       <button className="btn primary lg" onClick={go} autoFocus>Create Seating Plan</button>
     </section>
   );
@@ -712,20 +718,20 @@ function SummaryBar({ adm, papers, appearing, groups, special, results, goRules 
     const notSeated = results.reduce((a, x) => a + x.result.unseated.length, 0);
     return (
       <div className="sumbox" role="status">
-        <Tile label="Students seated" value={n(all.length)} sub={`in ${pl(results.length, 'seating')}`} />
-        <Tile label="Online (labs)" value={n(on)} tone="good" sub="students in computer labs" />
-        <Tile label="Offline (classrooms)" value={n(all.length - on)} sub={moved ? `${n(moved)} moved from online, labs full` : 'students in classrooms'} />
-        <Tile label="Without a seat" value={n(notSeated)} tone={notSeated ? 'bad' : 'good'} sub={notSeated ? 'see the Not_Seated sheet' : 'everyone has a seat'} />
+        <Tile label="Students seated" value={<Num v={all.length} />} sub={`in ${pl(results.length, 'seating')}`} />
+        <Tile label="Online (labs)" value={<Num v={on} />} tone="good" sub="students in computer labs" />
+        <Tile label="Offline (classrooms)" value={<Num v={all.length - on} />} sub={moved ? `${n(moved)} moved from online, labs full` : 'students in classrooms'} />
+        <Tile label="Without a seat" value={<Num v={notSeated} />} tone={notSeated ? 'bad' : 'good'} sub={notSeated ? 'see the Not_Seated sheet' : 'everyone has a seat'} />
         {specials}
       </div>
     );
   }
   return (
     <div className="sumbox" role="status">
-      <Tile label="Active students" value={n(adm.students.length)} sub={`${n(appearing)} appearing · ${pl(papers.reduce((a, p) => a + p.slots.length, 0), 'paper')}`} />
+      <Tile label="Active students" value={<Num v={adm.students.length} />} sub={`${n(appearing)} appearing · ${pl(papers.reduce((a, p) => a + p.slots.length, 0), 'paper')}`} />
       {!groups.length && <Tile label="Seats" value="–" sub="Tick batches to see online and offline seats" />}
       {groups.map((g) => (
-        <Tile key={g.start} label={`${range(g)} · ${g.papers.join(', ')}`} value={`${n(g.online + g.offline - g.overflow)} students`} tone={g.offlineShort ? 'bad' : g.onlineShort ? 'warn' : 'good'}>
+        <Tile key={g.start} label={`${range(g)} · ${g.papers.join(', ')}`} value={<><Num v={g.online + g.offline - g.overflow} /> students</>} tone={g.offlineShort ? 'bad' : g.onlineShort ? 'warn' : 'good'}>
           {g.online > 0 && <span className="tile-s"><b>Online:</b> {n(g.online - g.overflow)} / {n(g.onlineSeats)} lab seats · {g.onlineShort ? `${n(g.onlineShort)} go offline (labs full)` : `${n(g.onlineLeft)} free`}</span>}
           {(g.offline > 0 || g.overflow > 0) && <span className="tile-s"><b>Offline:</b> {n(g.offline)} / {n(g.offlineSeats)} classroom seats · {g.offlineShort ? `${n(g.offlineShort)} without a seat` : `${n(g.offlineLeft)} free`}</span>}
           {g.items.length > 1 && <span className="tile-s muted">{g.items.length} papers at this time share these labs and rooms</span>}
@@ -1754,6 +1760,7 @@ function ResultStep({ results, view, setView, metaFor, multi, order, reshuffle, 
   const files = results.filter((y) => y.batches.length).length;
   return (
     <section>
+      <div className="readyhead"><DoneMark /><span className="kicker">{unseatedAll ? 'Seating ready · check the students without a seat' : 'Seating ready'}</span></div>
       <Head title={meta.title}
         lead={`${fmtDateDMY(meta.dateISO)} · ${paperTime(x.paper)} · ${meta.modeLabel}${meta.batchesLabel ? ` · Batches ${meta.batchesLabel}` : ''}`} />
       {multi && (
@@ -1788,10 +1795,10 @@ function ResultStep({ results, view, setView, metaFor, multi, order, reshuffle, 
         </div>
       </div>
       <div className="kpis">
-        <div><b>{result.assigned.length}</b><span>of {x.students} seated</span></div>
-        <div><b>{result.usedRooms.length}</b><span>rooms used</span></div>
-        <div><b>{girls}</b><span>girls seated</span></div>
-        <div><b>{special}</b><span>monitoring, due fee, top</span></div>
+        <div><b><Num v={result.assigned.length} from0 /></b><span>of {x.students} seated</span></div>
+        <div><b><Num v={result.usedRooms.length} from0 /></b><span>rooms used</span></div>
+        <div><b><Num v={girls} from0 /></b><span>girls seated</span></div>
+        <div><b><Num v={special} from0 /></b><span>monitoring, due fee, top</span></div>
         <div><b>{shiftsOf(x.paper).length}</b><span>{shiftsOf(x.paper).length > 1 ? 'attendance sheets (one per shift)' : 'attendance sheet'}</span></div>
       </div>
       {result.warnings.map((w) => <div key={w} className="alert warn"><span>{w}</span></div>)}
@@ -1826,9 +1833,9 @@ function ResultStep({ results, view, setView, metaFor, multi, order, reshuffle, 
                 const g = r.occupants.filter(isGirl).length;
                 const w = (n) => `${(n / r.capacity) * 100}%`;
                 return (
-                  <div className="rcard" key={`${r.kind}${r.room}`} title={`${b} ${r.room}: ${r.used} students, ${g} girls${sp ? `, ${sp} special` : ''}${r.taken ? `, seats 1–${r.taken} used by an overlapping paper` : ''}`}>
+                  <div className="rcard tilt" key={`${r.kind}${r.room}`} title={`${b} ${r.room}: ${r.used} students, ${g} girls${sp ? `, ${sp} special` : ''}${r.taken ? `, seats 1–${r.taken} used by an overlapping paper` : ''}`}>
                     <div className="rc-top"><b>{r.room}</b><span>{r.used}/{r.capacity}</span></div>
-                    <div className="rc-bar"><span className="taken" style={{ width: w(r.taken) }} /><span className="home" style={{ width: w(r.used - sp) }} /><span className="moved" style={{ width: w(sp) }} /></div>
+                    <div className="rc-bar"><span className="taken" style={{ '--w': w(r.taken) }} /><span className="home" style={{ '--w': w(r.used - sp) }} /><span className="moved" style={{ '--w': w(sp) }} /></div>
                     <span className="muted small">Seats {r.taken + 1}–{r.taken + r.used} · {pl(g, 'girl')}{sp ? ` · ${sp} special` : ''}</span>
                   </div>
                 );
