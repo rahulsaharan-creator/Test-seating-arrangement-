@@ -6,11 +6,15 @@ Everything runs in the browser. The admission list is never uploaded to any serv
 
 ## How the operator uses it
 
-1. **Admission list:** upload the latest admission list (.xlsx). Only students marked Active are used.
-2. **Test date & shifts:** pick the date and choose one shift or two, with the time of each. With two shifts, the same students keep the same seat, and there is one attendance sheet per shift.
-3. **Batches & mode:** tick the batches appearing and set each one to Offline (classroom) or Online (computer lab). A batch with no known building asks for one. The choice is saved for next time.
-4. **Rooms & capacity:** switch rooms on or off, raise capacities, and set the order in which students move between buildings.
-5. **Generate sheet:** see the seat-fill map, reshuffle if wanted, and download the Excel file.
+The start screen has one button, **Create Seating Plan**. Then:
+
+1. **Admission list:** upload the latest admission list (.xlsx). Only students marked Active are used. Optional: the room list, monitoring and due fee students, seating rules and the phase list.
+2. **Test & papers:** the date, PRT or RPT, the courses, then each paper: name, 1 or 2 shifts, phases and batches.
+3. **Online / Offline:** Online, Offline or Both for each paper (with Both, each batch or single students), and the top batches. **Create seating** picks the labs and buildings.
+4. **Online seating** and **Offline seating:** check or change the labs, buildings, rooms and capacity for this test.
+5. **Seating:** review the rooms (cards or table), reshuffle if wanted, and download the Excel file or the notice board.
+
+A summary panel on the right (a bottom sheet on phones) updates as you choose. Back never loses data.
 
 ## Seating rules
 
