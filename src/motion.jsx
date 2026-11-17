@@ -79,7 +79,7 @@ export function Num({ v, from0 = false }) {
 }
 
 // Start screen: a classroom of seats in 3D. Seats fill with students in a green wave; the room leans with the pointer.
-export function Seats3D() {
+export function Seats3D({ full = false, missing = 0 }) {
   const ref = useRef(null);
   useEffect(() => {
     const el = ref.current; if (!el || reduced()) return undefined;
@@ -91,14 +91,15 @@ export function Seats3D() {
     addEventListener('pointermove', move, { passive: true });
     return () => removeEventListener('pointermove', move);
   }, []);
-  const rows = 7, cols = 9;
+  const rows = full ? 5 : 7, cols = full ? 7 : 9;
+  const red = full ? Math.min(missing ? Math.max(1, Math.round(missing / 10)) : 0, rows * cols) : 0;
   return (
-    <div className="seats3d" ref={ref} aria-hidden="true">
+    <div className={`seats3d ${full ? 'full' : ''}`} ref={ref} aria-hidden="true">
       <div className="stage">
         <div className="floor" />
         {Array.from({ length: rows * cols }, (_, i) => {
           const r = Math.floor(i / cols), c = i % cols;
-          return <span key={i} className={`seat ${(r * 7 + c * 3) % 11 === 0 ? 'girl' : ''}`} style={{ '--r': r, '--c': c, '--i': r + c }} />;
+          return <span key={i} className={`seat ${i >= rows * cols - red ? 'none' : (r * 7 + c * 3) % 11 === 0 ? 'girl' : ''}`} style={{ '--r': r, '--c': c, '--i': r + c }} />;
         })}
         <div className="desk" />
       </div>
@@ -112,3 +113,81 @@ export const DoneMark = ({ bad = false }) => (
     <svg viewBox="0 0 52 52" width="56" height="56"><circle cx="26" cy="26" r="23" />{bad ? <path d="M26 14v15M26 37v.5" /> : <path d="M15 27l7 7 15-16" />}</svg>
   </span>
 );
+
+// ---------- One small 3D scene per step, about what that step does, and driven by its real numbers:
+// students: an admission sheet whose rows fill (a tick when the file is read)
+// test: a calendar showing the test date and a clock set to the first paper's time
+// online / offline: students streaming to computer screens or to desks, in the real online : offline split
+// online seating: a row of lab screens lighting up as far as the labs are filled
+// offline seating: buildings rising, their windows lit as far as the rooms are filled
+const clamp01 = (x) => Math.max(0, Math.min(1, Number.isFinite(x) ? x : 0));
+function SceneSheet({ loaded }) {
+  return (
+    <div className="iso"><div className="iso-in">
+      <div className="sheet s3" /><div className="sheet s2" />
+      <div className={`sheet s1 ${loaded ? 'done' : ''}`}>
+        <div className="sh-head" />
+        {Array.from({ length: 6 }, (_, i) => <div key={i} className="sh-row" style={{ '--i': i }}><i /><i /><i /></div>)}
+        {loaded && <span className="stamp">✓</span>}
+      </div>
+      {!loaded && <span className="uparrow">↑</span>}
+    </div></div>
+  );
+}
+function SceneCalendar({ date, time }) {
+  const d = date ? new Date(`${date}T00:00:00`) : null;
+  const [h, m] = (time || '09:00').split(':').map(Number);
+  return (
+    <div className="calscene">
+      <div className="cal">
+        <div className="cal-top"><i /><i /></div>
+        <div className="cal-m">{d ? d.toLocaleDateString('en-IN', { month: 'short' }) : '—'}</div>
+        <div className="cal-d" key={date || 'none'}>{d ? d.getDate() : '?'}</div>
+        <div className="cal-w">{d ? d.toLocaleDateString('en-IN', { weekday: 'short' }) : ''}</div>
+      </div>
+      <div className="clock">
+        {Array.from({ length: 12 }, (_, i) => <i key={i} style={{ '--a': `${i * 30}deg` }} />)}
+        <span className="hand hh" style={{ '--to': `${(h % 12) * 30 + m / 2}deg` }} key={`h${time}`} />
+        <span className="hand mm" style={{ '--to': `${m * 6}deg` }} key={`m${time}`} />
+        <span className="pin" />
+      </div>
+    </div>
+  );
+}
+function SceneSplit({ online, offline }) {
+  const total = online + offline, N = 14;
+  const nL = total ? Math.round((N * online) / total) : 0;
+  return (
+    <div className="split">
+      <div className="spot lab"><span className="mon"><b /></span><small>{online.toLocaleString('en-IN')}</small></div>
+      <div className="stream">{Array.from({ length: N }, (_, i) => <i key={i} className={!total ? 'idle' : i < nL ? 'l' : 'r'} style={{ '--i': i }} />)}</div>
+      <div className="spot room"><span className="dsk"><b /></span><small>{offline.toLocaleString('en-IN')}</small></div>
+    </div>
+  );
+}
+function SceneLabs({ n, fill }) {
+  // 7 screens stand for the seats of the chosen labs; as many light up as are filled
+  const k = 7, lit = Math.max(n ? 1 : 0, Math.round(clamp01(fill) * k));
+  return (
+    <div className="labs3d"><div className="labs-in">
+      {Array.from({ length: k }, (_, i) => <span key={i} className={`pc ${i < lit ? 'on' : ''}`} style={{ '--i': i }}><b /></span>)}
+    </div></div>
+  );
+}
+function SceneRooms({ n, fill }) {
+  // 5 buildings: the chosen ones stand out; their windows light up as far as their rooms are filled
+  const k = 5, used = Math.max(1, Math.min(k, n || 1)), f = clamp01(fill);
+  return (
+    <div className="iso"><div className="iso-in city">
+      {Array.from({ length: k }, (_, i) => (
+        <span key={i} className={`bld ${i < used ? 'used' : 'idle'}`} style={{ '--i': i, '--x': `${i * 58 - 18}px`, '--h': `${46 + ((i * 37) % 3) * 16}px`, '--lit': i < used ? (f > (i + 0.5) / used ? 0.95 : f > i / used ? 0.6 : 0.2) : 0.06 }}>
+          <span className="f top" /><span className="f front" /><span className="f side" />
+        </span>
+      ))}
+    </div></div>
+  );
+}
+export function Scene({ kind, ...p }) {
+  const body = { sheet: SceneSheet, calendar: SceneCalendar, split: SceneSplit, labs: SceneLabs, rooms: SceneRooms }[kind];
+  return <div className={`scene scene-${kind}`} aria-hidden="true">{body ? React.createElement(body, p) : null}</div>;
+}

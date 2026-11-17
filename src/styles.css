@@ -629,3 +629,118 @@ input[type=checkbox] { accent-color: var(--accent); }
 
 .chip-btn.on:hover:not(:disabled) { background: var(--btn-h); color: var(--btn-ink); }
 .btn.primary:hover:not(:disabled), .btn.cta:hover:not(:disabled) { background: var(--btn-h); }
+
+/* ===== Step scenes: one small 3D picture per step, about that step ===== */
+.scene { height: 150px; display: grid; place-items: center; margin: -8px 0 16px; perspective: 900px; pointer-events: none; animation: sceneIn .9s var(--spring) both; }
+@keyframes sceneIn { from { opacity: 0; transform: translateY(14px) scale(.96); filter: blur(6px); } }
+.iso { width: 360px; height: 150px; display: grid; place-items: center; perspective: 900px; }
+.iso-in { position: relative; width: 220px; height: 130px; transform-style: preserve-3d; transform: rotateX(58deg) rotateZ(-34deg); animation: floaty 6s ease-in-out infinite; }
+
+/* students: an admission sheet whose rows fill in */
+.sheet { position: absolute; inset: 0; border-radius: 12px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line2), 0 22px 40px -18px rgba(0,0,0,.35); padding: 12px 14px; display: flex; flex-direction: column; gap: 7px; }
+.sheet.s2 { transform: translateZ(-10px) translate(10px, 10px); opacity: .7; }
+.sheet.s3 { transform: translateZ(-20px) translate(20px, 20px); opacity: .45; }
+.sheet.s1 { transform: translateZ(6px); }
+.sh-head { height: 10px; border-radius: 4px; background: var(--accent); }
+.sh-row { display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 6px; animation: rowIn 3.6s var(--spring) calc(var(--i) * 220ms) infinite; }
+.sh-row i { height: 8px; border-radius: 3px; background: var(--card3); }
+.sh-row i:first-child { background: var(--accent-soft); }
+@keyframes rowIn { 0% { opacity: 0; transform: translateX(-26px); } 18%, 80% { opacity: 1; transform: none; } 100% { opacity: 0; transform: none; } }
+.sheet.done .sh-row { animation: rowDone .7s var(--spring) calc(var(--i) * 80ms) both; }
+@keyframes rowDone { from { opacity: 0; transform: translateX(-26px); } }
+.sheet.done .sh-row i { background: var(--accent-soft); }
+.sheet.done .sh-row i:first-child { background: var(--accent); }
+.stamp { position: absolute; right: -14px; top: -14px; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: #fff; font-size: 22px; font-weight: 700; transform: translateZ(30px); box-shadow: 0 14px 22px -8px rgba(2,130,79,.6); animation: stampIn .6s var(--spring) .4s both; }
+@keyframes stampIn { from { transform: translateZ(120px) scale(.4); opacity: 0; } }
+.uparrow { position: absolute; left: 50%; top: 50%; font-size: 34px; color: var(--accent); font-weight: 700; transform: translateZ(70px) rotateZ(34deg) rotateX(-58deg); animation: bob 1.6s ease-in-out infinite; }
+@keyframes bob { 50% { margin-top: -12px; } }
+
+/* test: a calendar on the test date and a clock at the paper's time */
+.calscene { display: flex; gap: 32px; align-items: center; transform: rotateY(-14deg) rotateX(8deg); transform-style: preserve-3d; animation: floaty 6s ease-in-out infinite; }
+.cal { width: 104px; height: 120px; border-radius: 18px; background: var(--card); box-shadow: 0 22px 40px -18px rgba(0,0,0,.35), inset 0 0 0 1px var(--line2); text-align: center; overflow: hidden; position: relative; }
+.cal-top { height: 26px; background: var(--accent); display: flex; justify-content: center; gap: 34px; align-items: center; }
+.cal-top i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.7); }
+.cal-m { font-size: 12px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: .08em; margin-top: 6px; }
+.cal-d { font-size: 44px; font-weight: 700; line-height: 1; letter-spacing: -.04em; transform-origin: top; animation: flip .8s var(--spring) both; }
+@keyframes flip { from { transform: rotateX(-90deg); opacity: 0; } }
+.cal-w { font-size: 12px; color: var(--muted); }
+.clock { position: relative; width: 104px; height: 104px; border-radius: 50%; background: var(--card); box-shadow: 0 22px 40px -18px rgba(0,0,0,.35), inset 0 0 0 1px var(--line2); }
+.clock > i { position: absolute; left: 50%; top: 6px; width: 2px; height: 8px; margin-left: -1px; background: var(--line); transform-origin: 1px 46px; transform: rotate(var(--a)); }
+.hand { position: absolute; left: 50%; bottom: 50%; width: 4px; margin-left: -2px; border-radius: 2px; transform-origin: bottom center; transform: rotate(var(--to)); animation: spin 1.4s var(--spring) both; }
+.hand.hh { height: 26px; background: var(--ink); }
+.hand.mm { height: 38px; width: 3px; margin-left: -1.5px; background: var(--accent); }
+@keyframes spin { from { transform: rotate(calc(var(--to) - 360deg)); } }
+.pin { position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--card); }
+
+/* online / offline: students stream to screens or desks, in the real split */
+.split { width: min(520px, 100%); display: grid; grid-template-columns: 110px 1fr 110px; align-items: center; gap: 8px; transform: rotateX(18deg); transform-style: preserve-3d; }
+.spot { display: grid; justify-items: center; gap: 6px; }
+.spot small { font-size: 18px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.spot.lab small { color: var(--accent); } .spot.room small { color: var(--navy); }
+.mon { width: 64px; height: 46px; border-radius: 8px; background: var(--ink2); padding: 5px; position: relative; box-shadow: 0 16px 24px -12px rgba(0,0,0,.4); }
+.mon b { display: block; height: 100%; border-radius: 4px; background: linear-gradient(135deg, var(--accent2), var(--accent)); animation: glow 2.4s ease-in-out infinite; }
+.mon::after { content: ""; position: absolute; left: 50%; bottom: -10px; width: 26px; height: 6px; margin-left: -13px; border-radius: 3px; background: var(--ink2); }
+.dsk { width: 70px; height: 42px; position: relative; }
+.dsk b { position: absolute; inset: 0 0 14px; border-radius: 6px; background: linear-gradient(135deg, #7DA7E8, var(--navy)); box-shadow: 0 16px 24px -12px rgba(0,0,0,.4); }
+.dsk::before, .dsk::after { content: ""; position: absolute; bottom: 0; width: 6px; height: 16px; border-radius: 2px; background: var(--ink2); }
+.dsk::before { left: 10px; } .dsk::after { right: 10px; }
+@keyframes glow { 50% { filter: brightness(1.25); } }
+.stream { position: relative; height: 70px; }
+.stream i { position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; margin: -6px; border-radius: 50%; background: var(--muted); animation: 2.8s var(--spring) calc(var(--i) * 190ms) infinite; }
+.stream i.l { background: var(--accent); animation-name: toL; }
+.stream i.r { background: var(--navy); animation-name: toR; }
+.stream i.idle { animation-name: idle; }
+@keyframes toL { 0% { transform: translate(0, 0) scale(.4); opacity: 0; } 15% { opacity: 1; transform: translate(0, -10px) scale(1); } 85% { opacity: 1; } 100% { transform: translate(-150px, 8px) scale(.6); opacity: 0; } }
+@keyframes toR { 0% { transform: translate(0, 0) scale(.4); opacity: 0; } 15% { opacity: 1; transform: translate(0, -10px) scale(1); } 85% { opacity: 1; } 100% { transform: translate(150px, 8px) scale(.6); opacity: 0; } }
+@keyframes idle { 0%, 100% { transform: translate(calc((var(--i) - 7) * 14px), 0); opacity: .5; } 50% { transform: translate(calc((var(--i) - 7) * 14px), -10px); opacity: 1; } }
+
+/* online seating: lab screens light up as far as the labs are filled */
+.labs3d { perspective: 800px; }
+.labs-in { display: flex; gap: 14px; transform: rotateX(16deg) rotateY(-22deg); transform-style: preserve-3d; animation: floaty 6s ease-in-out infinite; }
+/* float with the translate property, so it never undoes a scene's 3D tilt */
+@keyframes floaty { 50% { translate: 0 -8px; } }
+.pc { width: 58px; height: 44px; border-radius: 8px; background: var(--ink2); padding: 5px; position: relative; box-shadow: 0 18px 26px -12px rgba(0,0,0,.45); animation: pcIn .7s var(--spring) calc(var(--i) * 90ms) both; }
+.pc::after { content: ""; position: absolute; left: 50%; bottom: -10px; width: 22px; height: 6px; margin-left: -11px; border-radius: 3px; background: var(--ink2); }
+.pc b { display: block; height: 100%; border-radius: 4px; background: #2C2D32; transition: background .6s var(--ease); }
+.pc.on b { background: linear-gradient(135deg, var(--accent2), var(--accent)); animation: boot .9s var(--ease) calc(.4s + var(--i) * 140ms) both, glow 2.4s ease-in-out calc(1.4s + var(--i) * 140ms) infinite; }
+@keyframes pcIn { from { opacity: 0; transform: translateY(24px) rotateX(-40deg); } }
+@keyframes boot { from { filter: brightness(.2); } 40% { filter: brightness(1.6); } to { filter: none; } }
+
+/* offline seating: buildings rise; their windows light as far as the rooms are filled */
+.city { width: 340px; }
+.bld { position: absolute; left: var(--x); top: 30px; width: 46px; height: 46px; transform-style: preserve-3d; transform-origin: 50% 50% 0; animation: rise 1s var(--spring) calc(var(--i) * 120ms) both; }
+@keyframes rise { from { transform: scaleZ(.02); } }
+.bld .f { position: absolute; display: block; }
+.bld .top { inset: 0; transform: translateZ(var(--h)); background: var(--card); box-shadow: inset 0 0 0 1px var(--line2); border-radius: 2px; }
+.bld .front { left: 0; bottom: 0; width: 46px; height: var(--h); transform-origin: bottom; transform: rotateX(-90deg); background-color: var(--card2); }
+.bld .side { right: 0; top: 0; width: var(--h); height: 46px; transform-origin: right; transform: rotateY(90deg); background-color: var(--card3); }
+.bld .front, .bld .side { background-image: repeating-linear-gradient(90deg, transparent 0 6px, rgba(3,180,110, var(--lit)) 6px 14px, transparent 14px 20px), repeating-linear-gradient(0deg, var(--card2) 0 6px, transparent 6px 14px); background-blend-mode: normal; animation: lights 3s ease-in-out calc(1s + var(--i) * 200ms) infinite; }
+@keyframes lights { 50% { filter: brightness(1.12); } }
+
+/* seating ready: the classroom again, every seat taken */
+.rhero-art { margin-left: auto; width: 260px; height: 150px; display: grid; place-items: center; }
+.seats3d.full { width: 260px; height: 160px; animation: none; }
+.seats3d.full .stage { width: 280px; height: 200px; transform: scale(.6) rotateX(var(--tx)) rotateZ(var(--tz)); }
+.seats3d.full .seat { animation: drop .8s var(--spring) calc(.4s + var(--i) * 45ms) backwards; background: var(--accent); transform: translateZ(14px); box-shadow: 0 0 0 1px transparent, 0 14px 12px -6px rgba(0,0,0,.3); }
+.seats3d.full .seat.girl { background: var(--navy); }
+.seats3d.full .seat.none { background: var(--red); animation: drop .8s var(--spring) calc(.4s + var(--i) * 45ms) backwards, blink 1.2s ease-in-out 1.6s infinite; }
+@keyframes blink { 50% { opacity: .35; } }
+@media (max-width: 900px) { .rhero-art { display: none; } }
+@media (max-width: 760px) { .scene { height: 120px; transform: scale(.85); } .split { grid-template-columns: 80px 1fr 80px; } }
+@media (prefers-reduced-motion: reduce) { .scene, .scene *, .seats3d.full .seat { animation: none !important; } }
+@media print { .scene, .rhero-art { display: none !important; } }
+
+/* buildings: square windows, unused buildings fade */
+.bld .front, .bld .side { background-color: var(--card2); background-image: linear-gradient(var(--card2) 40%, transparent 40%), repeating-linear-gradient(90deg, var(--card2) 0 5px, rgba(3,180,110, var(--lit)) 5px 11px); background-size: 100% 11px, 100% 100%; }
+.bld .side { background-color: var(--card3); filter: brightness(.94); }
+.bld.idle .f { opacity: .5; }
+.bld.used .top { background: var(--accent-soft); }
+
+/* buildings: solid walls with depth, windows on a grid; unused ones stay visible but quiet */
+.bld .front { --face: var(--card3); }
+.bld .side { --face: var(--line); filter: none; }
+.bld .front, .bld .side { background-color: var(--face); background-image: linear-gradient(var(--face) 40%, transparent 40%), repeating-linear-gradient(90deg, var(--face) 0 5px, rgba(3,180,110, var(--lit)) 5px 11px); box-shadow: inset 0 0 0 1px rgba(0,0,0,.04); }
+.bld .top { background: var(--card); box-shadow: inset 0 0 0 1px var(--line2), 0 0 0 1px rgba(0,0,0,.02); }
+.bld.idle .f { opacity: .55; }
+.bld.used .top { background: var(--accent-soft); }
+/* (no filter on 3D groups: a filter flattens them) */

@@ -4,7 +4,7 @@ import { allocate, capacity, naturalCompare, isGirl, roomKey, FLAGS, SEAT_ORDERS
 import { buildWorkbookAll, buildNoticeBoard, fmtDateDMY, fmtTime } from './lib/exporter.js';
 import { readAdmissions, readRooms, readRollList, parseRolls } from './lib/readers.js';
 import { parsePhaseList, groupPhases, seatSummary, fillPreview, rptFill } from './lib/plan.js';
-import { useMotion, Num, Seats3D, DoneMark } from './motion.jsx';
+import { useMotion, Num, Seats3D, DoneMark, Scene } from './motion.jsx';
 
 const loadExcel = () => import('exceljs').then((m) => m.default || m);
 const STORE = 'seating-settings-v1';
@@ -570,6 +570,11 @@ export default function App() {
   const setupOk = !!adm && !!test.date && !!curP && paperOk(curP);
   const canOpen = (id) => (id === 'students' ? true : id === 'test' ? !!adm : id === 'mode' ? !!adm && !!test.date && papers.some(setupReady) : id === 'result' ? !!results : setupOk);
   const doneMark = (id) => (id === 'students' ? !!adm : id === 'test' ? !!test.date && papers.some(setupReady) : id === 'mode' ? papers.some((p) => p.done) : false);
+  // what each step's scene shows: the real split and how full the chosen labs and rooms are
+  const sceneTotals = papers.flatMap((p) => p.slots.map((s) => countSlot(p, s))).reduce((a, c) => ({ online: a.online + c.online, offline: a.offline + c.offline }), { online: 0, offline: 0 });
+  const firstSlot = papers[0] && papers[0].slots[0];
+  const labScene = (() => { if (!curP) return { n: 0, fill: 0 }; const set = new Set(curP.slots.flatMap((x) => x.labs || [])); const seats = sumSeats(labsOf(curP).filter((l) => set.has(roomKey(l)))); const need = curP.slots.reduce((a, x) => a + countSlot(curP, x).online, 0); return { n: set.size, fill: seats ? need / seats : 0 }; })();
+  const roomScene = (() => { if (!curP) return { n: 0, fill: 0 }; const set = new Set(curP.slots.flatMap((x) => x.buildings || [])); const seats = sumSeats(roomsOf(curP).filter((r) => set.has(r.building))); const need = curP.slots.reduce((a, x) => a + (x.batches.length ? planOf(x).offNeed : 0), 0) / Math.max(1, timeGroupsOf(curP).length); return { n: set.size, fill: seats ? need / seats : 0 }; })();
   const labsNeeded = curP ? curP.slots.some((s) => countSlot(curP, s).online > 0) : false;
   const offlineNeeded = curP ? curP.slots.some((s) => s.batches.length && planOf(s).offNeed > 0) : false;
 
@@ -612,6 +617,7 @@ export default function App() {
 
         {step === 'students' && (
           <section>
+            <Scene kind="sheet" loaded={!!adm} />
             <FileCard title="Admission list" hint="Columns: Roll_Number, Student_Name, Gender, Course, Batch, Medium, Status"
               loaded={adm && <><b>{adm.fileName}</b><span>{pl(adm.students.length, 'active student')} · {pl(batches.length, 'batch')}{adm.inactive ? ` · ${adm.inactive} inactive left out` : ''}{adm.duplicates ? ` · ${adm.duplicates} duplicate rolls skipped` : ''}</span></>}
               onFile={onAdmission} onRemove={removeAdmission} template={() => downloadTemplate('admission')} big />
@@ -648,19 +654,19 @@ export default function App() {
         )}
 
         {(step === 'test' || step === 'mode') && (
-          <PaperStep key={step} part={step === 'mode' ? 'mode' : 'setup'} setupReady={setupReady} goMode={() => setStep('mode')} goTest={() => setStep('test')} test={test} setTest={setTest} setPaper={setPaper} setSlot={setSlot} courses={courses} phases={phases} ownerOf={ownerOf} slotOf={slotOf}
+          <PaperStep key={step} part={step === 'mode' ? 'mode' : 'setup'} scene={step === 'mode' ? <Scene kind="split" online={sceneTotals.online} offline={sceneTotals.offline} /> : <Scene kind="calendar" date={test.date} time={firstSlot && firstSlot.start} />} setupReady={setupReady} goMode={() => setStep('mode')} goTest={() => setStep('test')} test={test} setTest={setTest} setPaper={setPaper} setSlot={setSlot} courses={courses} phases={phases} ownerOf={ownerOf} slotOf={slotOf}
             batchMap={batchMap} phaseBatches={phaseBatches} studentsByBatch={studentsByBatch} studentMode={studentMode} setStudentMode={setStudentMode}
             sumSlot={sumSlot} paperOk={paperOk} start={startPaper} back={() => setStep(step === 'mode' ? 'test' : 'students')} labSeatsOf={labSeatsOf} labsOf={labsOf} adjustLabs={adjustLabs} setLabCap={setLabCap}
             blds={settings.buildingOrder.filter((b) => roomsOn.some((r) => r.building === b))} />
         )}
 
         {step === 'labs' && curP && (
-          <LabStep p={curP} idx={curIdx} labsOn={labsOf(curP)} order={settings.buildingOrder} setSlot={setSlot} countSlot={countSlot} planOf={planOf} girlsOf={(s) => girlsOf(curP, s)} topLabs={topLabsOf(curP)}
+          <LabStep scene={<Scene kind="labs" n={labScene.n} fill={labScene.fill} />} p={curP} idx={curIdx} labsOn={labsOf(curP)} order={settings.buildingOrder} setSlot={setSlot} countSlot={countSlot} planOf={planOf} girlsOf={(s) => girlsOf(curP, s)} topLabs={topLabsOf(curP)}
             back={() => setStep('mode')} next={() => (offlineNeeded ? setStep('rooms') : prepare())} label={offlineNeeded ? 'Continue' : 'Prepare seating'} />
         )}
 
         {step === 'rooms' && curP && (
-          <RoomStep p={curP} idx={curIdx} settings={settings} setSettings={setSettings} setSlot={setSlot} planOf={planOf}
+          <RoomStep scene={<Scene kind="rooms" n={roomScene.n} fill={roomScene.fill} />} p={curP} idx={curIdx} settings={settings} setSettings={setSettings} setSlot={setSlot} planOf={planOf}
             roomsOn={roomsOf(curP)} labsOn={labsOf(curP)} girlsOf={(s) => girlsOf(curP, s)} topBlds={topBldsOf(curP)} onRoomFile={onRoomFile} adjustCap={(...a) => adjustCap(curP, ...a)} setRoomCap={(...a) => setRoomCap(curP, ...a)}
             back={() => setStep(labsNeeded ? 'labs' : 'mode')} next={prepare} label="Prepare seating" />
         )}
@@ -788,7 +794,7 @@ function Nav({ back, next, nextOk = true, nextLabel = 'Continue', hint, children
   );
 }
 
-function PaperStep({ part = 'setup', setupReady, goMode, goTest, test, setTest, setPaper, setSlot, courses, phases, ownerOf, slotOf, phaseBatches, studentsByBatch, studentMode, setStudentMode, sumSlot, paperOk, start, back, labSeatsOf, labsOf, adjustLabs, setLabCap, blds }) {
+function PaperStep({ scene = null, part = 'setup', setupReady, goMode, goTest, test, setTest, setPaper, setSlot, courses, phases, ownerOf, slotOf, phaseBatches, studentsByBatch, studentMode, setStudentMode, sumSlot, paperOk, start, back, labSeatsOf, labsOf, adjustLabs, setLabCap, blds }) {
   const topOf = (p) => new Set(p.top || []);
   const setTopOf = (p) => (fn) => setPaper(p.id, { top: [...fn(new Set(p.top || []))] });
   const addPaper = () => setTest({ ...test, papers: [...test.papers, newPaper()] });
@@ -812,6 +818,7 @@ function PaperStep({ part = 'setup', setupReady, goMode, goTest, test, setTest, 
     const notYet = test.papers.map((p, i) => [p, i]).filter(([p]) => !setupReady(p));
     return (
       <section>
+        {scene}
         <div className="papers">{ready.map(([p, i]) => cardOf(p, i))}</div>
         {notYet.length > 0 && <div className="alert info"><span>{notYet.map(([p, i]) => `Test ${i + 1}`).join(', ')} {notYet.length > 1 ? 'are' : 'is'} not set up yet.</span><button className="btn sm" onClick={goTest}>Finish on Test & papers</button></div>}
         <Nav back={back} />
@@ -821,6 +828,7 @@ function PaperStep({ part = 'setup', setupReady, goMode, goTest, test, setTest, 
   const removePaper = (id) => setTest({ ...test, papers: test.papers.filter((p) => p.id !== id) });
   return (
     <section>
+      {scene}
       <div className="card form">
         <label className="field">
           <span>Test date</span>
@@ -1374,7 +1382,7 @@ function BigLine({ left, placed, empty, what, more }) {
 }
 
 // One card for the whole test (all its papers share one seating); a change applies to every paper of the test
-function LabStep({ p, idx, labsOn, order, setSlot: setOne, planOf, girlsOf, topLabs = [], back, next, label }) {
+function LabStep({ scene = null, p, idx, labsOn, order, setSlot: setOne, planOf, girlsOf, topLabs = [], back, next, label }) {
   const setSlot = (pp, sid, patch) => setOne(pp, planOf({ id: sid }).ids || [sid], patch);
   const slots = p.slots.filter((s) => s.batches.length && planOf(s).first === s.id && planOf(s).c.online > 0);
   const groups = {};
@@ -1382,6 +1390,7 @@ function LabStep({ p, idx, labsOn, order, setSlot: setOne, planOf, girlsOf, topL
   const blds = Object.keys(groups).sort((a, b) => order.indexOf(a) - order.indexOf(b));
   return (
     <section>
+      {scene}
       {slots.map((s) => {
         const need = planOf(s).c.online;
         const mine = p.slots.filter((x) => (planOf(s).ids || []).includes(x.id)).flatMap((x) => x.labs || []);
@@ -1440,7 +1449,7 @@ function LabStep({ p, idx, labsOn, order, setSlot: setOne, planOf, girlsOf, topL
   );
 }
 
-function RoomStep({ p, idx, settings, setSettings, setSlot: setOne, planOf, roomsOn, labsOn = [], girlsOf, topBlds = [], onRoomFile, adjustCap, setRoomCap, back, next, label }) {
+function RoomStep({ scene = null, p, idx, settings, setSettings, setSlot: setOne, planOf, roomsOn, labsOn = [], girlsOf, topBlds = [], onRoomFile, adjustCap, setRoomCap, back, next, label }) {
   const setSlot = (pp, sid, patch) => setOne(pp, planOf({ id: sid }).ids || [sid], patch);
   const editRoom = (kind, i, patch) => setSettings((s) => ({ ...s, [kind]: s[kind].map((r, j) => (j === i ? { ...r, ...patch } : r)) }));
   const move = (i, d) => setSettings((s) => {
@@ -1454,6 +1463,7 @@ function RoomStep({ p, idx, settings, setSettings, setSlot: setOne, planOf, room
   const slots = p.slots.filter((s) => s.batches.length && planOf(s).first === s.id && planOf(s).offNeed > 0);
   return (
     <section>
+      {scene}
       {slots.map((s) => {
         const pl0 = planOf(s);
         const need = pl0.offNeed;
@@ -1827,6 +1837,7 @@ function ResultStep({ results, metaFor, order, reshuffle, download, downloadBoar
           <h1 className="words">{title.split(' ').map((w, i) => <span key={i} style={{ '--k': i }}>{w} </span>)}</h1>
           <p className="rsub">{parts.join(' · ')}</p>
         </div>
+        <div className="rhero-art"><Seats3D full missing={unseated.length} /></div>
       </div>
       {!ok && <div className="alert bad"><span>They are in the Not_Seated sheet with the reason. Add a building or room and prepare again.</span><button className="btn sm" onClick={back}>Add rooms</button></div>}
       <div className="ractions">
