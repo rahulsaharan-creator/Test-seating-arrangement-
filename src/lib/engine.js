@@ -80,7 +80,7 @@ export function allocate(students, config) {
     .sort((a, b) => rank(a.r.building) - rank(b.r.building) || a.i - b.i)
     .map(({ r }) => ({
       ...r, kind, capacity: Number(r.capacity), taken: Number(taken[roomKey(r)] || 0), used: 0, occupants: [],
-      girls: kind === 'Online' ? r.girls !== false && girlsOk[r.building] !== false : girlsOk[r.building] !== false,
+      girls: r.girls !== false && girlsOk[r.building] !== false, // a lab used for offline students keeps its own rule
     }))
     .filter((r) => r.capacity - r.taken > 0);
   const rooms = pool(config.rooms || [], 'Offline');

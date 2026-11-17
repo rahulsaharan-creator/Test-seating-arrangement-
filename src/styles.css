@@ -410,3 +410,12 @@ h2 { font-size: 18px; font-weight: 700; letter-spacing: -.01em; margin: 28px 0 8
 .chip-x:hover { border-color: #c0392b; color: #c0392b; }
 .addbatch { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
 .addbatch select { font: inherit; padding: 4px 6px; border: 1px solid var(--line2); border-radius: 8px; background: var(--card); color: var(--ink); }
+
+/* girls counts on the seating steps, capacity for several buildings, top-batch seats */
+.girls { color: var(--navy); font-weight: 600; }
+.bld-chip .girls { display: block; }
+.captool.multi { flex-direction: column; align-items: flex-start; }
+.captool.multi .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.chip-btn.sm { padding: 3px 10px; font-size: 12.5px; }
+.topseats { border-top: 1px dashed var(--line); padding-top: 10px; }
+.topseats .chips { align-items: center; }

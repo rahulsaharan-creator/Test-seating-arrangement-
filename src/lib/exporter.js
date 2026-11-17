@@ -134,31 +134,43 @@ export function buildWorkbookAll(ExcelJS, items, day) {
     ws.pageSetup = { orientation: 'portrait', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0, ...(many ? {} : { printTitlesRow: '5:5' }) };
   }
 
-  // ---------- Attendance: one sheet, a block per paper, shift and room, each on its own page
+  // ---------- Attendance: one sheet, a block per paper and room, each on its own page. A paper sat in two shifts has
+  // one block per room with a signature column for each shift (the students keep the same seat).
   {
     const ws = wb.addWorksheet('Attendance');
-    ws.columns = [{ width: 12.7 }, { width: 34.6 }, { width: 9.1 }, { width: 43.9 }];
+    const most = Math.max(1, ...P.map((p) => {
+      const n = {}; for (const sl of p.meta.slots || []) n[sl.paper || ''] = (n[sl.paper || ''] || 0) + 1;
+      return Math.max(1, ...Object.values(n));
+    }));
+    ws.columns = [{ width: 12.7 }, { width: 34.6 }, { width: 9.1 }, ...Array.from({ length: most }, () => ({ width: most > 1 ? 24 : 43.9 }))];
     let r = 1;
-    for (const p of P) p.shiftLabels.forEach((shift, si) => {
-      const only = (p.meta.slots || [])[si]?.paper;
-      for (const room of p.rooms) {
-        const occ = inRoom(p.rows, room).filter((s) => !only || s.Paper === only).sort((a, b) => a['Seat No.'] - b['Seat No.']);
-        if (only && !occ.length) continue;
-        titleRow(ws, r++, `${many ? `${p.name}  |  ` : ''}${room.building}  |  Room ${room.room}  |  ${fmtDateLong(dateISO)}  |  ${shift}  (${occ.length} students)`, 4,
+    for (const p of P) {
+      // Shifts grouped by paper (slots carry the paper name when a test has several papers)
+      const groups = [];
+      p.shiftLabels.forEach((label, si) => {
+        const paper = (p.meta.slots || [])[si]?.paper;
+        const g = groups.find((x) => x.paper === paper);
+        if (g) g.labels.push(label); else groups.push({ paper, labels: [label] });
+      });
+      for (const g of groups) for (const room of p.rooms) {
+        const occ = inRoom(p.rows, room).filter((s) => !g.paper || s.Paper === g.paper).sort((a, b) => a['Seat No.'] - b['Seat No.']);
+        if (g.paper && !occ.length) continue;
+        const ncol = 3 + g.labels.length;
+        titleRow(ws, r++, `${many ? `${p.name}  |  ` : ''}${room.building}  |  Room ${room.room}  |  ${fmtDateLong(dateISO)}  |  ${g.labels.join(' & ')}  (${occ.length} students)`, ncol,
           { bold: true, size: 12, color: C.navy, bg: C.titleFill });
-        head(ws, r++, ['Reg. No.', 'Student Name', 'Seat No.', `Signature (${shift})`], { bold: true, size: 11, color: C.green, bg: C.headFill });
+        head(ws, r++, ['Reg. No.', 'Student Name', 'Seat No.', ...g.labels.map((l) => `Signature (${l})`)], { bold: true, size: 11, color: C.green, bg: C.headFill });
         for (const s of occ) {
-          [asNum(s.Roll_Number), s.Student_Name, s['Seat No.'], null].forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v; style(c); });
+          [asNum(s.Roll_Number), s.Student_Name, s['Seat No.'], ...g.labels.map(() => null)].forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v; style(c); });
           ws.getRow(r).height = 20;
           r++;
         }
-        const t = ws.getCell(r, 4);
-        t.value = `Total: ${occ.length} students`;
-        style(t, { bold: true, color: C.brown, bg: C.totFill, align: { horizontal: 'right' } });
+        const t2 = ws.getCell(r, ncol);
+        t2.value = `Total: ${occ.length} students`;
+        style(t2, { bold: true, color: C.brown, bg: C.totFill, align: { horizontal: 'right' } });
         ws.getRow(r).addPageBreak();
         r += 2;
       }
-    });
+    }
     ws.pageSetup = { orientation: 'portrait', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
   }
 

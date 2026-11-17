@@ -15,8 +15,9 @@ const meta1 = { title: 'Demo - Paper 1', dateISO: '2026-11-15', shifts: ['07:00'
 const meta2 = { ...meta1, title: 'Demo - Paper 2', slots: [{ label: '', start: '08:00', end: '11:00' }] };
 const wb = buildWorkbook(ExcelJS, p1, meta1);
 const names = wb.worksheets.map((w) => w.name);
-let shiftBlocks = new Set(); wb.getWorksheet('Attendance').eachRow((r) => { const v = String(r.getCell(1).value || ''); const m = v.match(/(Shift \d)/); if (v.includes('Room') && m) shiftBlocks.add(m[1]); });
-ok(shiftBlocks.size === 2, `two shifts give attendance blocks for both shifts on one sheet (${names.join(', ')})`);
+// Two shifts: one attendance block per room (not one per shift), with a signature column for each shift
+let blocks = 0, sigCols = 0; wb.getWorksheet('Attendance').eachRow((r) => { const v = String(r.getCell(1).value || ''); if (v.includes('Room') && v.includes('Shift 1') && v.includes('Shift 2')) blocks++; if (r.getCell(1).value === 'Reg. No.') sigCols = Math.max(sigCols, r.values.filter((x) => String(x).startsWith('Signature')).length); });
+ok(blocks === p1.usedRooms.length && sigCols === 2, `two shifts: one attendance block per room (${blocks} for ${p1.usedRooms.length} rooms) with 2 signature columns (${names.join(', ')})`);
 const sl = wb.getWorksheet('Student_list'); const head = sl.getRow(1).values;
 ok(head.includes('Flag'), 'Student_list has a Flag column');
 const smd = wb.getWorksheet('SMD'); let sawGroup = false; smd.eachRow((r) => { if (r.values.includes('Group A')) sawGroup = true; });
