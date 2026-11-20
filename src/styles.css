@@ -744,3 +744,8 @@ input[type=checkbox] { accent-color: var(--accent); }
 .bld.idle .f { opacity: .55; }
 .bld.used .top { background: var(--accent-soft); }
 /* (no filter on 3D groups: a filter flattens them) */
+.menu-list.boardbox { gap: 10px; padding: 14px; min-width: 300px; }
+.menu-list.boardbox .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.menu-list.boardbox select { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line, #d1d5db); font: inherit; background: var(--card); }
+.menu-list.boardbox .btn.cta { text-align: center; justify-content: center; background: #02824F; color: #fff; font-weight: 600; }
+.menu-list.boardbox .btn.cta:hover { background: #026c42; }

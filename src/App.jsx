@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import defaults from './data/defaults.json';
 import { allocate, capacity, naturalCompare, isGirl, roomKey, FLAGS, SEAT_ORDERS } from './lib/engine.js';
-import { buildWorkbookAll, buildNoticeBoard, fmtDateDMY, fmtTime } from './lib/exporter.js';
+import { buildWorkbookAll, fmtDateDMY, fmtTime } from './lib/exporter.js';
+import { noticeData, noticeBuildings, noticeFloors, noticePdf, floorText } from './lib/noticePdf.js';
 import { readAdmissions, readRooms, readRollList, parseRolls } from './lib/readers.js';
 import { parsePhaseList, groupPhases, seatSummary, fillPreview, rptFill } from './lib/plan.js';
 import { useMotion, Num, Seats3D, DoneMark, Scene } from './motion.jsx';
@@ -32,9 +33,6 @@ function loadSettings() {
     }
   } catch { /* storage unavailable or empty */ }
   return freshSettings();
-}
-function loadLast() {
-  try { return JSON.parse(localStorage.getItem(LAST)) || null; } catch { return null; }
 }
 const uid = () => Math.random().toString(36).slice(2, 8);
 // A test: its courses and one or more papers (stored as slots).
@@ -67,9 +65,10 @@ export function timeGroupsOf(p) {
   return out.map((g) => g.sort((a, b) => mins(a.start) - mins(b.start))).sort((a, b) => mins(a[0].start) - mins(b[0].start));
 }
 const newPaper = () => ({ id: uid(), name: '', courses: [], slots: [newSlot()], done: false });
+// The test setup always starts empty (test type, papers, courses, phases, batches, times): nothing is carried over from
+// an earlier test. Only the admission page (step 1) keeps what was entered before.
 function initialTest() {
-  const last = loadLast();
-  if (last && Array.isArray(last.papers) && last.papers.length) return { title: last.title || '', kind: last.kind || 'PRT', date: '', papers: last.papers.map((p) => ({ ...newPaper(), ...p, top: [], topLabs: [], topBlds: [], topSep: null, slots: (p.slots || [newSlot()]).filter((s) => !s.top).map((s) => ({ ...newSlot(), ...s })), done: false })) };
+  try { localStorage.removeItem(LAST); } catch { /* ignore */ }
   return { title: '', date: '', papers: [newPaper()] };
 }
 
@@ -537,7 +536,6 @@ export default function App() {
       }
     });
     setResults(out); setSeed(newSeed); setView(0); setStep('result');
-    try { localStorage.setItem(LAST, JSON.stringify({ title: test.title, kind: test.kind, papers: list.map((p) => ({ ...p, done: false, top: [], topLabs: [], topBlds: [], topSep: null, slots: p.slots.filter((x) => !x.top) })) })); } catch { /* ignore */ }
   }
   function prepare() {
     const list = test.papers.map((p) => (p.id === cur ? { ...p, done: true } : p));
@@ -574,12 +572,24 @@ export default function App() {
     } catch (e) { setError(`Could not build the file: ${e.message}`); }
     setBusy('');
   }
-  async function downloadBoard() {
-    setBusy('Building the notice board…');
+  // Notice board PDF in the layout of the "Seating Arrangement" sheet: one PDF per building, or one building and floor
+  const boardData = results ? noticeData(results.filter((x) => x.batches.length).map((x) => ({ result: x.result, meta: metaFor(x) }))) : [];
+  async function downloadBoard(building, floor) {
+    setBusy('Building the notice board PDF…');
     try {
-      const ExcelJS = await loadExcel();
-      const wb = buildNoticeBoard(ExcelJS, results.filter((x) => x.batches.length).map((x) => ({ result: x.result, meta: metaFor(x) })), { dateISO: test.date, dayTitle: dayTitle() });
-      saveBlob(new Blob([await wb.xlsx.writeBuffer()], { type: XLSX }), `Notice_board_${fmtDateDMY(test.date)}.xlsx`);
+      const { jsPDF } = await import('jspdf');
+      const autoTable = (await import('jspdf-autotable')).default;
+      const blds = building === '*' ? noticeBuildings(boardData) : [building];
+      let n = 0;
+      for (const b of blds) {
+        const floors = building !== '*' && floor !== '*' ? [floor] : noticeFloors(boardData, b);
+        const blob = noticePdf(jsPDF, autoTable, boardData, { dateISO: test.date, dayTitle: dayTitle(), building: b, floors });
+        if (!blob) continue;
+        saveBlob(blob, `Notice_board_${b.replace(/[^\w-]+/g, '_')}${building !== '*' && floor !== '*' ? `_${floorText(floor).replace(/[^\w-]+/g, '_')}` : ''}_${fmtDateDMY(test.date)}.pdf`);
+        n++;
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      if (!n) setError('No students for that building and floor.');
     } catch (e) { setError(`Could not build the notice board: ${e.message}`); }
     setBusy('');
   }
@@ -666,7 +676,7 @@ export default function App() {
                 onChange={(e) => setSettings((s) => ({ ...s, phaseText: e.target.value }))} aria-label="Phase list" />
               {phaseList.issues.map((x) => <p key={x} className="muted small bad">{x}</p>)}
             </details>
-            {adm && <Nav next={() => setStep('test')} />}
+            {adm && <Nav next={() => { setTest(initialTest()); setResults(null); setCur(''); setStep('test'); }} />}
           </section>
         )}
 
@@ -691,7 +701,7 @@ export default function App() {
         {step === 'result' && results && (
           <ResultStep results={results} metaFor={metaFor} order={settings.buildingOrder} dateISO={test.date}
             reshuffle={async () => { if (await askConfirm('Reshuffle every seat? The current seating is replaced.', 'Reshuffle')) run(Math.floor(Math.random() * 1e9), test.papers); }}
-            download={download} downloadBoard={downloadBoard} back={() => setStep('rooms')} />
+            download={download} downloadBoard={downloadBoard} boardData={boardData} back={() => setStep('rooms')} />
         )}
         {step === 'result' && results && papers.some((p) => !p.done) && (
           <div className="alert info"><span>{papers.map((p, i) => (p.done ? '' : `Test ${i + 1}`)).filter(Boolean).join(', ')}: seating not made yet.</span><button className="btn sm" onClick={() => setStep('test')}>Set up next paper</button></div>
@@ -1913,8 +1923,13 @@ function SeatingBlock({ x, order, look }) {
     </div>
   );
 }
-function ResultStep({ results, metaFor, order, reshuffle, download, downloadBoard, back, dateISO }) {
+function ResultStep({ results, metaFor, order, reshuffle, download, downloadBoard, boardData = [], back, dateISO }) {
   const [menu, setMenu] = useState(false);
+  const [board, setBoard] = useState(false);
+  const [bld, setBld] = useState('*');
+  const [fl, setFl] = useState('*');
+  const boardBlds = noticeBuildings(boardData);
+  const boardFloors = bld === '*' ? [] : noticeFloors(boardData, bld);
   const [look, setLook] = useState('cards');
   const n = (v) => Number(v || 0).toLocaleString('en-IN');
   const all = results.flatMap((x) => x.result.assigned), unseated = results.flatMap((x) => x.result.unseated);
@@ -1945,7 +1960,27 @@ function ResultStep({ results, metaFor, order, reshuffle, download, downloadBoar
       {!ok && <div className="alert bad"><span>They are in the Not_Seated sheet with the reason. Add a building or room and prepare again.</span><button className="btn sm" onClick={back}>Add rooms</button></div>}
       <div className="ractions">
         <button className="btn cta xl" onClick={download} disabled={!files} title="Seating plan, student list, attendance, SMD, room layout and master list in one Excel file">{Ico.down}Download seating sheet</button>
-        <button className="btn secondary" onClick={downloadBoard}>Notice board</button>
+        <div className="menu">
+          <button className="btn secondary" onClick={() => setBoard(!board)} aria-expanded={board}>Notice board PDF ▾</button>
+          {board && (
+            <div className="menu-list boardbox">
+              <label className="field"><span>Building</span>
+                <select value={bld} onChange={(e) => { setBld(e.target.value); setFl('*'); }}>
+                  <option value="*">Every building (one PDF each)</option>
+                  {boardBlds.map((b) => <option key={b} value={b}>{b}</option>)}
+                </select>
+              </label>
+              <label className="field"><span>Floor (optional)</span>
+                <select value={fl} disabled={bld === '*'} onChange={(e) => setFl(e.target.value)}>
+                  <option value="*">{bld === '*' ? 'Every floor' : 'Every floor (whole building)'}</option>
+                  {boardFloors.map((f) => <option key={f} value={f}>{floorText(f)}</option>)}
+                </select>
+              </label>
+              <button className="btn cta" onClick={() => { setBoard(false); downloadBoard(bld, fl); }}>{Ico.down}Download PDF for notice board</button>
+              <small className="muted">Same layout as the Seating Arrangement sheet. One PDF per building; with every floor, each floor starts on a new page.</small>
+            </div>
+          )}
+        </div>
         <div className="menu">
           <button className="btn ghost" onClick={() => setMenu(!menu)} aria-expanded={menu}>More ▾</button>
           {menu && (

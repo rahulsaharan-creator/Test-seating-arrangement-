@@ -79,12 +79,14 @@ export async function readRooms(ExcelJS, buffer) {
   await wb.xlsx.load(buffer);
   const rooms = [], labs = [];
   const rc = wb.getWorksheet('Room_Capacity') || wb.worksheets[0];
+  // optional Floor column (any position after the first three), used for the notice board by floor
+  const fi = (sheetRows(rc)[0] || []).findIndex((h, i) => i > 2 && String(h || '').trim().toLowerCase() === 'floor');
   for (const r of sheetRows(rc).slice(1)) {
     if (!r[0] || !r[2] || isNaN(Number(r[2]))) continue;
     const building = canonBuilding(r[0]);
     const room = r[1];
     const note = (r[3] || '').trim();
-    const entry = { building, room, capacity: Number(r[2]), enabled: !/^self/i.test(note), note, cols: 0 };
+    const entry = { building, room, capacity: Number(r[2]), enabled: !/^self/i.test(note), note, cols: 0, ...(fi > 2 && String(r[fi] || '').trim() ? { floor: String(r[fi]).trim() } : {}) };
     if (building === 'PC' && room.toUpperCase() === 'PC-LAB') labs.push(entry);
     else rooms.push(entry);
   }
