@@ -34,3 +34,10 @@ assert.ok(r.lists.every((l) => Object.keys(l.parts).length === 0));
 assert.ok(!r.lists[3].batches.some((b) => B.find((x) => x.batch === b).girls > 0));
 
 console.log('rpt: all checks passed');
+
+// Labs blocked for top batches at time 2 (30 seats): time 2 takes only the other 20 seats
+r = rptFill({ batches: B, n: 4, cap: 50, reserve: { 1: 30 } });
+assert.equal(r.lists[1].load, 50);
+assert.equal(r.lists[1].batches.reduce((a, b) => a + (r.lists[1].parts[b] ? r.lists[1].parts[b][1] - r.lists[1].parts[b][0] : B.find((x) => x.batch === b).count), 0), 20);
+assert.equal(r.left, 0);
+console.log('rpt blocked labs: ok');

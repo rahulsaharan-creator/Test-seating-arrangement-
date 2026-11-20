@@ -56,8 +56,10 @@ export function timeGroupsOf(p) {
   const used = p.slots.filter((s) => s.batches.length).sort((a, b) => mins(a.start) - mins(b.start));
   const out = [];
   for (const s of used) {
+    // RPT top batches seated separately: always their own seating (their labs are blocked for the others at that time)
+    if (s.top) { out.push([s]); continue; }
     // join every group this paper clashes with (a paper can link two groups)
-    const hit = out.filter((g) => g.some((x) => slotsClash(x, s)));
+    const hit = out.filter((g) => !g.some((x) => x.top) && g.some((x) => slotsClash(x, s)));
     const merged = hit.flat().concat([s]);
     for (const g of hit) out.splice(out.indexOf(g), 1);
     out.push(merged);
@@ -67,7 +69,7 @@ export function timeGroupsOf(p) {
 const newPaper = () => ({ id: uid(), name: '', courses: [], slots: [newSlot()], done: false });
 function initialTest() {
   const last = loadLast();
-  if (last && Array.isArray(last.papers) && last.papers.length) return { title: last.title || '', kind: last.kind || 'PRT', date: '', papers: last.papers.map((p) => ({ ...newPaper(), ...p, top: [], topLabs: [], topBlds: [], slots: (p.slots || [newSlot()]).map((s) => ({ ...newSlot(), ...s })), done: false })) };
+  if (last && Array.isArray(last.papers) && last.papers.length) return { title: last.title || '', kind: last.kind || 'PRT', date: '', papers: last.papers.map((p) => ({ ...newPaper(), ...p, top: [], topLabs: [], topBlds: [], topSep: null, slots: (p.slots || [newSlot()]).filter((s) => !s.top).map((s) => ({ ...newSlot(), ...s })), done: false })) };
   return { title: '', date: '', papers: [newPaper()] };
 }
 
@@ -235,13 +237,19 @@ export default function App() {
   // even when their building is not ticked, so the counts match what the seating really uses.
   const pinKeys = new Set(['Monitoring', 'Due fee'].filter((f) => lists[f].length).flatMap((f) => settings.pins[f] || []));
   // Labs and buildings picked for the test's top batches always belong to its seats
-  const topLabsOf = (p) => (p && (p.top || []).length ? p.topLabs || [] : []);
-  const topBldsOf = (p) => (p && (p.top || []).length ? p.topBlds || [] : []);
-  const slotLabs = (s, p) => (s.labs ? labsOf(p).filter((l) => s.labs.includes(roomKey(l)) || pinKeys.has(roomKey(l)) || topLabsOf(p).includes(roomKey(l))) : labsOf(p));
+  const topLabsOf = (p) => (p && (p.top || []).length && !(p.topSep && p.topSep.on) ? p.topLabs || [] : []);
+  const topBldsOf = (p) => (p && (p.top || []).length && !(p.topSep && p.topSep.on) ? p.topBlds || [] : []);
+  // RPT top batches seated separately: their labs and the rooms of their buildings are blocked for every other student
+  // at their time (at other times those labs and rooms are free for everyone)
+  const blockedOf = (p, s) => new Set([...(s.labs || []), ...roomsOf(p).filter((r) => (s.buildings || []).includes(r.building)).map(roomKey)]);
+  // A time that overlaps the top batches' own seating never counts (or uses) their blocked labs and rooms
+  const blockedFor = (s, p) => { const t = p && !s.top && p.slots.find((x) => x.top); return t && slotsClash(s, t) ? blockedOf(p, t) : null; };
+  const notBlocked = (s, p, list) => { const b = blockedFor(s, p); return b ? list.filter((r) => !b.has(roomKey(r))) : list; };
+  const slotLabs = (s, p) => notBlocked(s, p, s.labs ? labsOf(p).filter((l) => s.labs.includes(roomKey(l)) || pinKeys.has(roomKey(l)) || topLabsOf(p).includes(roomKey(l))) : labsOf(p));
   // Labs used for offline students (Offline seating step): never a lab the same test uses for online students
   const slotOffLabs = (s, p) => { const on = new Set(slotLabs(s, p).map(roomKey)); return s.labs ? labsOf(p).filter((l) => (s.offLabs || []).includes(roomKey(l)) && !on.has(roomKey(l))) : []; };
   const slotBuildings = (s) => s.buildings || settings.buildingsOn;
-  const slotRooms = (s, p) => roomsOf(p).filter((r) => (slotBuildings(s).includes(r.building) && !s.roomsOff.includes(roomKey(r))) || pinKeys.has(roomKey(r)) || topBldsOf(p).includes(r.building));
+  const slotRooms = (s, p) => notBlocked(s, p, roomsOf(p)).filter((r) => (slotBuildings(s).includes(r.building) && !s.roomsOff.includes(roomKey(r))) || pinKeys.has(roomKey(r)) || topBldsOf(p).includes(r.building));
   const sumSeats = (list) => list.reduce((a, r) => a + Number(r.capacity || 0), 0);
   const countSlot = (p, s) => {
     const c = { online: 0, offline: 0 };
@@ -399,7 +407,7 @@ export default function App() {
   // "Create seating for this test": labs and buildings are picked automatically (in fill order, just enough seats for
   // every online and offline student of all its papers, after seats used by an overlapping test), then the seating is
   // prepared at once. The operator can change labs or buildings afterwards on the Online / Offline seating steps.
-  function autoPick(p, used) {
+  function autoPick(p, used, blocked = null) {
     const gc = [addUp(used.map((s) => countSlot(p, s)).concat([{ online: 0, offline: 0 }]))];
     const c = { online: Math.max(0, ...gc.map((x) => x.online)) };
     const taken = { labs: {}, rooms: {} };
@@ -412,28 +420,35 @@ export default function App() {
     let labSeats = labsOnP.filter((l) => pinKeys.has(roomKey(l))).reduce((a, l) => a + free(l, 'labs'), 0);
     for (const l of labsOnP.map((r, i) => ({ r, i })).sort((a, b) => rank(a.r.building) - rank(b.r.building) || a.i - b.i).map((x) => x.r)) {
       if (labSeats >= c.online) break;
-      if (free(l, 'labs') > 0 && !pinKeys.has(roomKey(l))) { labs.push(roomKey(l)); labSeats += free(l, 'labs'); }
+      if (free(l, 'labs') > 0 && !pinKeys.has(roomKey(l)) && !(blocked && blocked.has(roomKey(l)))) { labs.push(roomKey(l)); labSeats += free(l, 'labs'); }
     }
     const offNeed = Math.max(0, ...gc.map((x) => x.offline + Math.max(0, x.online - labSeats)));
     const buildings = [];
     let roomSeats = roomsOnP.filter((r) => pinKeys.has(roomKey(r))).reduce((a, r) => a + free(r, 'rooms'), 0);
     for (const b of settings.buildingOrder.filter((x) => settings.buildingsOn.includes(x))) {
       if (roomSeats >= offNeed) break;
-      const seats = roomsOnP.filter((r) => r.building === b && !pinKeys.has(roomKey(r))).reduce((a, r) => a + free(r, 'rooms'), 0);
+      const seats = roomsOnP.filter((r) => r.building === b && !pinKeys.has(roomKey(r)) && !(blocked && blocked.has(roomKey(r)))).reduce((a, r) => a + free(r, 'rooms'), 0);
       if (seats > 0) { buildings.push(b); roomSeats += seats; }
     }
     return { labs, buildings };
   }
   function startPaper(p) {
     const patch = {};
-    for (const g of timeGroupsOf(p)) {
-      const labs = [...new Set(g.flatMap((s) => s.labs || []))], buildings = [...new Set(g.flatMap((s) => s.buildings || []))];
+    const rpt = (test.kind || 'PRT') === 'RPT';
+    // RPT has no step to choose labs per time: pick them fresh for every time (never reuse picks saved from an earlier run).
+    // Top batches seated separately keep the labs and buildings the operator picked for them.
+    const fresh = rpt ? p.slots.map((s) => (s.top ? s : { ...s, labs: null, buildings: null, offLabs: [], roomsOff: [] })) : p.slots;
+    const topS = fresh.find((s) => s.top);
+    for (const g of timeGroupsOf({ ...p, slots: fresh })) {
+      const own = rpt && !g.some((s) => s.top);
+      const labs = own ? [] : [...new Set(g.flatMap((s) => s.labs || []))], buildings = own ? [] : [...new Set(g.flatMap((s) => s.buildings || []))];
       const online = g.reduce((a, s) => a + countSlot(p, s).online, 0);
-      const pick = (online && !labs.length) || !buildings.length ? autoPick(p, g) : null;
+      const blocked = own && topS && g.some((s) => slotsClash(s, topS)) ? blockedOf(p, topS) : null;
+      const pick = (online && !labs.length) || !buildings.length ? autoPick(p, g, blocked) : null;
       const sel = { labs: online && !labs.length ? pick.labs : labs, buildings: buildings.length ? buildings : pick.buildings };
       for (const s of g) patch[s.id] = sel;
     }
-    const np = { ...p, done: true, slots: p.slots.map((s) => (patch[s.id] ? { ...s, ...patch[s.id] } : { ...s, labs: s.labs || [], buildings: s.buildings || [] })) };
+    const np = { ...p, done: true, slots: fresh.map((s) => (patch[s.id] ? { ...s, ...patch[s.id] } : { ...s, labs: s.labs || [], buildings: s.buildings || [] })) };
     const list = test.papers.map((x) => (x.id === p.id ? np : x));
     setCur(p.id);
     setTest((t) => ({ ...t, papers: list }));
@@ -494,18 +509,20 @@ export default function App() {
     const cbOf = {};
     for (const g of settings.cbGroups) for (const b of parseRolls(g.batches)) if (g.name.trim()) cbOf[b] = g.name.trim();
     const units = list.filter((p) => p.done && p.slots.some((s) => s.batches.length))
-      .flatMap((p) => timeGroupsOf(p).map((used, gi, all) => ({ p, used, unit: { id: `${p.id}-${gi}`, name: `${(p.name || '').trim() || `Test ${list.indexOf(p) + 1}`}${all.length > 1 ? ` · ${used.map((s) => slotName(p, s)).join(' + ')}` : ''}`, mode: '', two: false, shifts: shiftsOfTest(p, used) } })))
-      .sort((a, b) => mins(windowOf(a.unit).start) - mins(windowOf(b.unit).start));
+      .flatMap((p) => timeGroupsOf(p).map((used, gi, all) => ({ p, used, top: used.some((s) => s.top), blocked: used.some((s) => s.top) ? blockedOf(p, used[0]) : null, unit: { id: `${p.id}-${gi}`, name: `${(p.name || '').trim() || `Test ${list.indexOf(p) + 1}`}${all.length > 1 ? ` · ${used.map((s) => slotName(p, s)).join(' + ')}` : ''}`, mode: '', two: false, shifts: shiftsOfTest(p, used) } })))
+      .sort((a, b) => b.top - a.top || mins(windowOf(a.unit).start) - mins(windowOf(b.unit).start));
     const done = [], out = [];
-    units.forEach(({ p, used, unit }, i) => {
+    units.forEach(({ p, used, unit, blocked }, i) => {
       const taken = {};
       const over = done.filter((d) => overlaps(d.unit, unit));
+      // labs and rooms kept for top batches are closed to everyone else at that time, even the seats they leave empty
+      for (const d of over) for (const k of d.blocked || []) taken[k] = 1e6;
       for (const d of over) for (const room of d.result.usedRooms) {
         const k = roomKey(room);
         taken[k] = Math.max(taken[k] || 0, room.taken + room.used);
       }
       const result = allocate(...unitInput(p, used, taken, newSeed + i, cbOf));
-      done.push({ unit, result, index: i });
+      done.push({ unit, result, index: i, blocked });
       const overNames = over.map((d) => d.unit.name);
       for (const kind of ['Online', 'Offline']) {
         const part = {
@@ -520,7 +537,7 @@ export default function App() {
       }
     });
     setResults(out); setSeed(newSeed); setView(0); setStep('result');
-    try { localStorage.setItem(LAST, JSON.stringify({ title: test.title, kind: test.kind, papers: list.map((p) => ({ ...p, done: false, top: [], topLabs: [], topBlds: [] })) })); } catch { /* ignore */ }
+    try { localStorage.setItem(LAST, JSON.stringify({ title: test.title, kind: test.kind, papers: list.map((p) => ({ ...p, done: false, top: [], topLabs: [], topBlds: [], topSep: null, slots: p.slots.filter((x) => !x.top) })) })); } catch { /* ignore */ }
   }
   function prepare() {
     const list = test.papers.map((p) => (p.id === cur ? { ...p, done: true } : p));
@@ -921,34 +938,57 @@ export const lastTimeOf = (r) => {
 // Which batches sit at each time: 'labs' (default for online) fills each time up to the lab seats and moves the rest to the
 // next time, splitting a batch where needed; 'equal' keeps batches whole with about the same number at each time.
 // The operator's own changes (r.pins: batches put at a time, r.outs: batches taken out of a time) always win.
-export function rptPlan(r, phases, cap) {
-  const batches = phases.filter((g) => r.phases.includes(g.key)).flatMap((g) => g.batches);
+export function rptPlan(r, phases, cap, sep = null) {
+  const batches = phases.filter((g) => r.phases.includes(g.key)).flatMap((g) => g.batches).filter((b) => !(sep && sep.batches.includes(b.batch)));
   const fill = r.mode === 'Offline' ? 'equal' : (r.fill || 'labs');
-  return rptFill({ batches, n: r.times.length, cap, fill, noGirlsAt: r.noGirlsLast === false ? -1 : lastTimeOf(r), pins: r.pins || {}, outs: r.outs || {} });
+  return rptFill({ batches, n: r.times.length, cap, fill, noGirlsAt: r.noGirlsLast === false ? -1 : lastTimeOf(r), pins: r.pins || {}, outs: r.outs || {}, reserve: sep ? sep.reserve : {} });
 }
-export function rptSlots(p, r, phases, cap) {
-  const { lists } = rptPlan(r, phases, cap);
+const shiftsOfTime = (r, t) => [{ start: t.start, end: t.end }, ...(r.two && t.s2 ? [t.s2] : [])];
+// Top batches seated separately (p.topSep, asked at the top of the RPT card): their own seating with its own mode,
+// shifts, time and labs (or buildings). Their labs are blocked at every test time they overlap, so those times get only
+// the other labs' seats (reserve); at the other times those labs are free for everyone. null until every answer is in.
+export function topSepOf(p, r, phases, labsOn = []) {
+  const t = p.topSep;
+  if (!t || !t.on || !t.mode || !t.start || !t.end || mins(t.end) <= mins(t.start)) return null;
+  if (t.two && !(t.s2 && t.s2.start && t.s2.end && mins(t.s2.end) > mins(t.s2.start) && mins(t.s2.start) >= mins(t.end))) return null;
+  const labs = t.mode === 'Offline' ? [] : (t.labs || []), blds = t.mode === 'Online' ? [] : (t.blds || []);
+  if (t.mode !== 'Offline' && !labs.length) return null;
+  if (t.mode === 'Offline' && !blds.length) return null;
+  const list = phases.filter((g) => r.phases.includes(g.key)).flatMap((g) => g.batches).filter((b) => (p.top || []).includes(b.batch));
+  if (!list.length) return null;
+  const mine = [{ start: t.start, end: t.end }, ...(t.two ? [t.s2] : [])];
+  const over = r.times.map((x, i) => (shiftsOfTime(r, x).some((a) => mine.some((b) => clash(a, b))) ? i : -1)).filter((i) => i >= 0);
+  const seats = labsOn.filter((l) => labs.includes(roomKey(l))).reduce((a, l) => a + Number(l.capacity || 0), 0);
+  return { mode: t.mode, two: !!t.two, start: t.start, end: t.end, s2: t.two ? t.s2 : null, labs, blds, over, seats,
+    batches: list.map((b) => b.batch), count: list.reduce((a, b) => a + b.count, 0), girls: list.some((b) => b.girls > 0),
+    reserve: Object.fromEntries(over.map((i) => [i, seats])) };
+}
+export function rptSlots(p, r, phases, cap, labsOn = []) {
+  const sep = topSepOf(p, r, phases, labsOn);
+  const { lists } = rptPlan(r, phases, cap, sep);
   return r.times.map((t, i) => {
     const L = lists[i];
     if (!L || !L.batches.length) return null;
     const id = `${p.id}-t${i}`, old = p.slots.find((x) => x.id === id) || {};
-    return { ...newSlot(t.start, t.end), ...old, id, name: `Time ${i + 1}`, mode: r.mode, phases: r.phases, start: t.start, end: t.end, two: !!r.two,
+    return { ...newSlot(t.start, t.end), ...old, labs: null, buildings: null, offLabs: [], roomsOff: [], id, name: `Time ${i + 1}`, mode: r.mode, phases: r.phases, start: t.start, end: t.end, two: !!r.two,
       s2: r.two ? (t.s2 || { start: hhmm(mins(t.end) + 120), end: hhmm(mins(t.end) + 120 + mins(t.end) - mins(t.start)) }) : (old.s2 || newSlot(t.start, t.end).s2),
       batches: L.batches, parts: L.parts, online: r.mode === 'Both' ? L.batches : [] };
-  }).filter(Boolean);
+  }).filter(Boolean).concat(sep ? [{ ...newSlot(sep.start, sep.end), id: `${p.id}-top`, top: true, name: 'Top batches', mode: sep.mode, phases: r.phases,
+    start: sep.start, end: sep.end, two: sep.two, s2: sep.s2 || newSlot(sep.start, sep.end).s2, batches: sep.batches, parts: {},
+    online: sep.mode === 'Both' ? sep.batches : [], labs: sep.labs, buildings: sep.blds, offLabs: [], roomsOff: [] }] : []);
 }
 // pins and outs are kept by time number: removing time k drops its entry and moves the later ones up
 const dropTime = (m, k) => Object.fromEntries(Object.entries(m || {}).filter(([i]) => Number(i) !== k).map(([i, v]) => [Number(i) > k ? Number(i) - 1 : Number(i), v]));
 
 function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, sumSlot, ok, start, top, setTop, labSeats, labsOn, adjustLabs, setLabCap, blds }) {
   const r = p.rpt || rptDefault();
-  const apply = (patch, extra = {}) => { const nr = { ...r, ...patch }; const np = { ...p, ...extra, rpt: nr }; setPaper(p.id, { ...extra, rpt: nr, slots: rptSlots(np, nr, phases, labSeats) }); };
+  const apply = (patch, extra = {}) => { const nr = { ...r, ...patch }; const np = { ...p, ...extra, rpt: nr }; setPaper(p.id, { ...extra, rpt: nr, slots: rptSlots(np, nr, phases, labSeats, labsOn) }); };
   // Lab seats changed (or a new admission list): spread the batches again
   useEffect(() => {
     if (!r.phases.length || !r.mode) return;
-    const ns = rptSlots(p, r, phases, labSeats);
+    const ns = rptSlots(p, r, phases, labSeats, labsOn);
     if (JSON.stringify(ns) !== JSON.stringify(p.slots)) setPaper(p.id, { slots: ns });
-  }, [labSeats, phases]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [labSeats, phases, JSON.stringify(p.top || []), JSON.stringify(p.topSep || null)]); // eslint-disable-line react-hooks/exhaustive-deps
   const mine = phases.filter((g) => p.courses.includes(g.course));
   const toggleCourse = (c) => {
     const cs = toggleIn(p.courses, c);
@@ -980,7 +1020,11 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
   const anyGirls = mine.some((g) => g.batches.some((b) => b.girls > 0));
   const last = r.noGirlsLast === false ? -1 : lastTimeOf(r);
   const byLabs = r.mode !== 'Offline' && (r.fill || 'labs') === 'labs';
-  const plan = r.phases.length && r.mode ? rptPlan(r, phases, labSeats) : { lists: [], left: 0, leftBatches: [] };
+  const sep = r.phases.length && r.mode ? topSepOf(p, r, phases, labsOn) : null;
+  const plan = r.phases.length && r.mode ? rptPlan(r, phases, labSeats, sep) : { lists: [], left: 0, leftBatches: [] };
+  const kept = (k) => (sep && sep.reserve[k]) || 0;
+  const sepOn = !!(p.topSep && p.topSep.on);
+  const sepReady = !sepOn || !!sep;
   const partN = (s, b) => (s.parts && s.parts[b] ? s.parts[b][1] - s.parts[b][0] : info[b]?.count || 0);
   const count = (s) => s.batches.reduce((a, b) => a + partN(s, b), 0);
   const sel = mine.filter((g) => r.phases.includes(g.key));
@@ -1008,9 +1052,10 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
           </div>
         </div>
       )}
+      {part === 'mode' && r.phases.length > 0 && <TopSep p={p} r={r} setPaper={setPaper} sel={sel} info={info} labs={labsOn} blds={blds} sep={sep} last={last} />}
       {part === 'mode' && r.phases.length > 0 && (
         <div className="q">
-          <b className="q-l">3. Online or offline?</b>
+          <b className="q-l">3. Online or offline?{sepOn ? ' (all other students)' : ''}</b>
           <div className="seg" role="group" aria-label="Online or offline">
             {[['Online', 'Online'], ['Offline', 'Offline'], ['Both', 'Both (labs first, the rest offline)']].map(([m, l]) => (
               <button key={m} className={r.mode === m ? 'on' : ''} onClick={() => apply({ mode: m })}>{l}</button>
@@ -1039,7 +1084,7 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
           {manual && <p className="small">You moved batches by hand. <button className="link" onClick={() => apply({ pins: {}, outs: {} })}>Undo my changes</button></p>}
           {r.times.map((t, k) => {
             const s = p.slots.find((x) => x.id === `${p.id}-t${k}`);
-            const over = byLabs && s ? count(s) - labSeats : 0;
+            const over = byLabs && s ? count(s) + kept(k) - labSeats : 0;
             const here = new Set(s ? s.batches.filter((b) => !(s.parts && s.parts[b])) : []);
             return (
               <div className="rpt-time" key={k}>
@@ -1047,14 +1092,14 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
                 {r.two && <TimeRow label="Shift 2" value={t.s2} onChange={(v) => setTime(k, { s2: v })} />}
                 {s ? (
                   <>
-                    <p className="rpt-batches"><b>{pl(count(s), 'student')}</b>{byLabs ? ` of ${labSeats} lab seats` : ''} · {pl(s.batches.length, 'batch')}{k === last ? ' · no girls' : s.batches.some((b) => info[b]?.girls > 0) ? ' · has girls' : ''}</p>
+                    <p className="rpt-batches"><b>{pl(count(s), 'student')}</b>{byLabs ? ` of ${labSeats - kept(k)} lab seats${kept(k) ? ` (${kept(k)} blocked for top batches)` : ''}` : ''} · {pl(s.batches.length, 'batch')}{k === last ? ' · no girls' : s.batches.some((b) => info[b]?.girls > 0) ? ' · has girls' : ''}</p>
                     <div className="chips">
                       {s.batches.map((b) => {
                         const pt = s.parts && s.parts[b];
                         const label = <>{top.has(b) ? '★ ' : ''}{b}{pt ? ` · ${pt[0] + 1} to ${pt[1]}` : ''} <small>{partN(s, b)}</small></>;
                         return (
                           <span key={b} className="chip-pair">
-                            {r.mode === 'Offline'
+                            {r.mode === 'Offline' || sepOn
                               ? <span className="chip-btn">{label}</span>
                               : <button type="button" className={`chip-btn ${top.has(b) ? 'on' : ''}`} title={top.has(b) ? 'Top batch: lab seats first' : 'Tick to make it a top batch'} onClick={() => toggleTop(b)}>{label}</button>}
                             <button type="button" className="chip-x" onClick={() => takeOut(k, b)} aria-label={`Take ${b} out of time ${k + 1}`} title="Take out of this time: its students go to the next time">×</button>
@@ -1066,7 +1111,8 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
                     {over > 0 && <p className="small bad">{pl(over, 'student')} more than the lab seats (batches added by hand). Add lab seats, or take a batch out.</p>}
                     <SeatBoard s={sumSlot(p, s)} mode={r.mode} />
                   </>
-                ) : <p className="muted small">No batches at this time.</p>}
+                ) : <p className="muted small">No other batches at this time.</p>}
+                {sep && sep.over.includes(k) && <p className="small topnote">★ Top batches sit at {sep.start} to {sep.end}{sep.two ? ` and ${sep.s2.start} to ${sep.s2.end}` : ''}: {sep.mode === 'Offline' ? `buildings ${sep.blds.join(', ')}` : `${pl(sep.labs.length, 'lab')} (${sep.seats} seats)`}{sep.mode === 'Both' && sep.blds.length ? ` and ${sep.blds.join(', ')}` : ''} blocked for them, so this time uses the other {sep.mode === 'Offline' ? 'rooms' : 'labs'}.</p>}
                 <AddBatch groups={sel} skip={here} onAdd={(b) => putAt(k, b)} label={`Time ${k + 1}`} />
               </div>
             );
@@ -1077,13 +1123,70 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
           <button type="button" className="addslot sm" onClick={addTime}>{Ico.plus}Add another time</button>
         </div>
       )}
-      {part === 'mode' && top.size > 0 && <TopSeats p={p} setPaper={setPaper} labs={labsOn} blds={blds} />}
-      {part === 'mode' && ok && plan.left === 0 && (
+      {part === 'mode' && top.size > 0 && !sepOn && <TopSeats p={p} setPaper={setPaper} labs={labsOn} blds={blds} />}
+      {part === 'mode' && ok && plan.left === 0 && !sepReady && <p className="small bad">Finish the top batches questions at the top (or answer No) before creating the seating.</p>}
+      {part === 'mode' && ok && plan.left === 0 && sepReady && (
         <div className="paper-cta">
           {p.done && <span className="pill">Seating ready ✓</span>}
           <button className="btn cta" onClick={start}>{Ico.spark}{p.done ? 'Change seating for this test' : 'Create seating for this test'}</button>
         </div>
       )}
+    </div>
+  );
+}
+
+// RPT, asked at the top: seat the top batches separately? Yes: pick the top batches, then online or offline, 1 or 2
+// shifts, their time, and the labs (or buildings) they sit in. Those labs and rooms are blocked for every other student
+// at that time; the others sit in the other labs, and in the top batches' labs at the times the top batches are not there.
+function TopSep({ p, r, setPaper, sel, info, labs, blds, sep, last }) {
+  const t = p.topSep || {};
+  const set = (v) => setPaper(p.id, { topSep: { ...t, ...v } });
+  const top = p.top || [];
+  const togB = (b) => setPaper(p.id, { top: top.includes(b) ? top.filter((x) => x !== b) : [...top, b] });
+  const tog = (field, k) => { const l = t[field] || []; set({ [field]: l.includes(k) ? l.filter((x) => x !== k) : [...l, k] }); };
+  const n = top.reduce((a, b) => a + (info[b]?.count || 0), 0);
+  const tl = t.labs || [], tb = t.blds || [];
+  const seats = labs.filter((l) => tl.includes(roomKey(l))).reduce((a, l) => a + Number(l.capacity || 0), 0);
+  const len = t.start && t.end ? mins(t.end) - mins(t.start) : 180;
+  const s2For = (end) => ({ start: hhmm(mins(end) + 60), end: hhmm(mins(end) + 60 + len) });
+  const pickTime = (x) => set({ start: x.start, end: x.end, ...(t.two ? { s2: r.two && x.s2 ? x.s2 : s2For(x.end) } : {}) });
+  return (
+    <div className="q topsep">
+      <b className="q-l">★ Seat top batches separately?</b>
+      <div className="seg sm" role="group" aria-label="Separate seating for top batches">
+        <button className={t.on === true ? 'on' : ''} onClick={() => set({ on: true })}>Yes, separate seating</button>
+        <button className={t.on !== true ? 'on' : ''} onClick={() => set({ on: false })}>No</button>
+      </div>
+      {t.on === true && <>
+        <b className="q-l">a. Top batches{top.length ? ` · ${pl(n, 'student')}` : ''}</b>
+        {sel.map((g) => (
+          <div className="chips" key={g.key}><span className="small muted">{g.phase}</span>
+            {g.batches.map((b) => <button key={b.batch} type="button" className={`chip-btn ${top.includes(b.batch) ? 'on' : ''}`} onClick={() => togB(b.batch)}>{top.includes(b.batch) ? '★ ' : ''}{b.batch} <small>{b.count}</small></button>)}
+          </div>
+        ))}
+        <b className="q-l">b. Online or offline</b>
+        <div className="seg sm" role="group" aria-label="Top batches online or offline">
+          {[['Online', 'Online'], ['Offline', 'Offline'], ['Both', 'Both (labs first, the rest offline)']].map(([m, l]) => <button key={m} className={t.mode === m ? 'on' : ''} onClick={() => set({ mode: m })}>{l}</button>)}
+        </div>
+        <b className="q-l">c. Shifts</b>
+        <div className="seg sm" role="group" aria-label="Top batches shifts">
+          <button className={!t.two ? 'on' : ''} onClick={() => set({ two: false })}>1 shift</button>
+          <button className={t.two ? 'on' : ''} onClick={() => set({ two: true, s2: t.s2 || (t.end ? s2For(t.end) : null) })}>2 shifts (same seat in both)</button>
+        </div>
+        <b className="q-l">d. Time</b>
+        <div className="chips">{r.times.map((x, k) => <button key={k} type="button" className={`chip-btn ${t.start === x.start && t.end === x.end ? 'on' : ''}`} onClick={() => pickTime(x)}>Same as Time {k + 1} · {x.start} to {x.end}</button>)}</div>
+        <TimeRow label={t.two ? 'Shift 1' : 'Time'} value={{ start: t.start || '', end: t.end || '' }} onChange={(v) => set(v)} />
+        {t.two && <TimeRow label="Shift 2" value={t.s2 || { start: '', end: '' }} onChange={(v) => set({ s2: { ...(t.s2 || {}), ...v } })} />}
+        {sep && sep.over.length > 0 && <p className="small">Overlaps {sep.over.map((i) => `Time ${i + 1}`).join(' and ')}: the labs and rooms picked below are blocked for the other students at that time.</p>}
+        {sep && sep.girls && sep.over.includes(last) && <p className="small bad">This overlaps the last time and a top batch has girls (no girls in the last time).</p>}
+        {t.mode && <>
+          <b className="q-l">e. {t.mode === 'Offline' ? 'Buildings' : t.mode === 'Both' ? 'Labs, then buildings for the rest' : 'Labs'} where they sit</b>
+          {t.mode !== 'Offline' && <div className="chips"><span className="small muted">Labs</span>{labs.map((l) => { const k = roomKey(l); return <button key={k} type="button" className={`chip-btn ${tl.includes(k) ? 'on' : ''}`} onClick={() => tog('labs', k)}>{l.building} · {l.room} <small>{l.capacity}</small></button>; })}</div>}
+          {t.mode !== 'Online' && <div className="chips"><span className="small muted">Buildings</span>{blds.map((b) => <button key={b} type="button" className={`chip-btn ${tb.includes(b) ? 'on' : ''}`} onClick={() => tog('blds', b)}>{b}</button>)}</div>}
+          {t.mode !== 'Offline' && tl.length > 0 && <p className={`small ${seats < n ? 'bad' : ''}`}>{seats} lab seats picked for {pl(n, 'student')}{seats < n ? `: ${n - seats} will sit offline${t.mode === 'Online' ? ' (buildings picked automatically)' : ''}` : ''}.</p>}
+        </>}
+        {!sep && <p className="small bad">Still to answer: {[!top.length && 'top batches', !t.mode && 'online or offline', !(t.start && t.end) && 'time', t.mode && t.mode !== 'Offline' && !tl.length && 'labs', t.mode === 'Offline' && !tb.length && 'buildings'].filter(Boolean).join(', ') || 'check the times'}.</p>}
+      </>}
     </div>
   );
 }
