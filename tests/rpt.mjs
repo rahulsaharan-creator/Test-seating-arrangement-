@@ -34,9 +34,3 @@ assert.ok(r.lists.every((l) => Object.keys(l.parts).length === 0));
 assert.ok(!r.lists[3].batches.some((b) => B.find((x) => x.batch === b).girls > 0));
 
 console.log('rpt: all checks passed');
-
-// Seats kept at a time for top batches seated separately: that time takes only the seats left
-r = rptFill({ batches: B, n: 4, cap: 50, reserve: { 1: 30 } });
-assert.equal(r.lists[1].load, 50, 'time 2 fills up to the lab seats including the kept 30');
-assert.equal(r.lists[1].load - 30, r.lists[1].batches.reduce((a, b) => a + (r.lists[1].parts[b] ? r.lists[1].parts[b][1] - r.lists[1].parts[b][0] : B.find((x) => x.batch === b).count), 0), 'only 20 other students at time 2');
-console.log('rpt reserve: ok');

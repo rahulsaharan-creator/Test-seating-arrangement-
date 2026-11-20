@@ -100,12 +100,11 @@ export function fillPreview(n, rooms, order = []) {
 // pins[i]: batches the operator put at time i (whole, placed first). outs[i]: batches the operator took out of time i.
 // noGirlsAt: the time where batches with girls may not sit (-1: none).
 // Returns lists[i] = { batches, parts: { batch: [from, to) }, load } and the students left without a time.
-// reserve[i]: lab seats already kept at time i (top batches seated separately); the batches get only the rest.
-export function rptFill({ batches, n, cap = 0, fill = 'labs', noGirlsAt = -1, pins = {}, outs = {}, reserve = {} }) {
+export function rptFill({ batches, n, cap = 0, fill = 'labs', noGirlsAt = -1, pins = {}, outs = {} }) {
   const valid = new Map(batches.map((b) => [b.batch, b]));
   const pinnedTo = {};
   for (const [i, bs] of Object.entries(pins)) if (Number(i) < n) for (const b of bs || []) if (valid.has(b)) pinnedTo[b] = Number(i);
-  const lists = Array.from({ length: n }, (_, i) => ({ batches: [], parts: {}, load: Number(reserve[i]) || 0 }));
+  const lists = Array.from({ length: n }, () => ({ batches: [], parts: {}, load: 0 }));
   for (const [b, i] of Object.entries(pinnedTo)) { lists[i].batches.push(b); lists[i].load += valid.get(b).count; }
   const out = (i, b) => (outs[i] || []).includes(b);
   const girlsBlocked = (i, b) => b.girls > 0 && i === noGirlsAt;

@@ -5,7 +5,6 @@
 //     Online means "online first": labs fill first (top batches before others); when the labs are full,
 //     the remaining online students are seated offline, one by one, not the whole batch.
 //  2. Special students (Monitoring, Due fee, Top batch) go first into the rooms chosen for their group.
-//     Seats left in the rooms chosen for top batches go to the other students first.
 //  3. Everyone else is shuffled together and fills the chosen buildings in the order Operations set,
 //     one room completely before the next.
 //  4. Girls only sit in buildings and labs marked "Girls allowed". Enough of those seats are kept for them.
@@ -164,12 +163,9 @@ export function allocate(students, config) {
 
     // 3. Everyone else, shuffled together, in building order. Inside a building, rooms kept for a group
     //    are used last, so their free seats are filled before anyone moves to the next building.
-    //    Rooms and labs kept for top batches come first: the seats the top batches leave there go to the others
-    //    before any other room is opened.
     const pinned = new Set(Object.values(config.pins || {}).flat());
-    const topRooms = new Set((config.pins || {})['Top batch'] || []);
     const ordered = roomList.map((r, i) => ({ r, i }))
-      .sort((a, b) => topRooms.has(roomKey(b.r)) - topRooms.has(roomKey(a.r)) || rank(a.r.building) - rank(b.r.building) || pinned.has(roomKey(a.r)) - pinned.has(roomKey(b.r)) || a.i - b.i)
+      .sort((a, b) => rank(a.r.building) - rank(b.r.building) || pinned.has(roomKey(a.r)) - pinned.has(roomKey(b.r)) || a.i - b.i)
       .map(({ r }) => r);
     // Online first: top batch students take lab seats before everyone else.
     const queue = kind === 'Online'
