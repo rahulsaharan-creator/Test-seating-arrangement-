@@ -101,6 +101,39 @@ export function fillPreview(n, rooms, order = []) {
 // noGirlsAt: the time where batches with girls may not sit (-1: none).
 // reserve[i]: lab seats blocked at time i (labs kept for top batches seated separately); the batches get only the rest.
 // Returns lists[i] = { batches, parts: { batch: [from, to) }, load } and the students left without a time.
+// RPT girls rule: no girl sits a time that starts at or after the cut-off ("late" times). The girls of a late time swap
+// places with the same number of boys from the earlier times. The boys come from one batch: all its boys first, then
+// the next batch only if more are needed. donor: the batch the operator picked to go first.
+// lists[i] = { batches, parts }; studentsOf(batch) = [{ roll, girl }] in roll order; late = Set of late time numbers.
+// Returns at[i] = { batch: [rolls] } after the swap, and what moved (girls, their batches, the boys' batches, girls left).
+export function girlSwap({ lists, late, studentsOf, donor = '' }) {
+  const n = lists.length;
+  const at = lists.map((L) => Object.fromEntries(L.batches.map((b) => { const all = studentsOf(b), pt = L.parts && L.parts[b]; return [b, (pt ? all.slice(pt[0], pt[1]) : all).slice()]; })));
+  const early = [...Array(n).keys()].filter((i) => !late.has(i));
+  const lateList = [...late].filter((i) => i < n).sort((a, b) => a - b);
+  const girls = lateList.flatMap((i) => Object.entries(at[i]).flatMap(([b, l]) => l.filter((s) => s.girl).map((s) => ({ s, b, from: i }))));
+  // batches whose boys can move: sitting at an earlier time only (not also at a late time), latest earlier time first
+  const atLate = new Set(lateList.flatMap((i) => lists[i].batches));
+  const cand = [];
+  for (const i of [...early].reverse()) for (const b of lists[i].batches) {
+    if (atLate.has(b) || cand.some((c) => c.batch === b)) continue;
+    const boys = early.reduce((a, k) => a + (at[k][b] || []).filter((s) => !s.girl).length, 0);
+    if (boys) cand.push({ batch: b, boys });
+  }
+  const order = donor && cand.some((c) => c.batch === donor) ? [cand.find((c) => c.batch === donor), ...cand.filter((c) => c.batch !== donor)] : cand;
+  const boys = [], donors = [];
+  for (const c of order) {
+    const need = girls.length - boys.length;
+    if (need <= 0) break;
+    const list = early.flatMap((k) => (at[k][c.batch] || []).filter((s) => !s.girl).map((s) => ({ s, b: c.batch, from: k }))).slice(0, need);
+    donors.push({ batch: c.batch, n: list.length });
+    boys.push(...list);
+  }
+  const k = boys.length;
+  const move = (s, b, from, to) => { at[from][b] = at[from][b].filter((x) => x !== s); (at[to][b] = at[to][b] || []).push(s); };
+  for (let j = 0; j < k; j++) { const g = girls[j], y = boys[j]; move(g.s, g.b, g.from, y.from); move(y.s, y.b, y.from, g.from); }
+  return { at, girls: k, left: girls.length - k, girlBatches: [...new Set(girls.slice(0, k).map((g) => g.b))], donors, cand };
+}
 export function rptFill({ batches, n, cap = 0, fill = 'labs', noGirlsAt = -1, pins = {}, outs = {}, reserve = {} }) {
   const valid = new Map(batches.map((b) => [b.batch, b]));
   const pinnedTo = {};

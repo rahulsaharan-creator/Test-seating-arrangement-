@@ -4,7 +4,7 @@ import { allocate, capacity, naturalCompare, isGirl, roomKey, FLAGS, SEAT_ORDERS
 import { buildWorkbookAll, fmtDateDMY, fmtTime } from './lib/exporter.js';
 import { noticeData, noticeBuildings, noticeFloors, noticePdf, floorText } from './lib/noticePdf.js';
 import { readAdmissions, readRooms, readRollList, parseRolls } from './lib/readers.js';
-import { parsePhaseList, groupPhases, seatSummary, fillPreview, rptFill } from './lib/plan.js';
+import { parsePhaseList, groupPhases, seatSummary, fillPreview, rptFill, girlSwap } from './lib/plan.js';
 import { useMotion, Num, Seats3D, DoneMark, Scene } from './motion.jsx';
 
 const loadExcel = () => import('exceljs').then((m) => m.default || m);
@@ -17,7 +17,7 @@ const freshSettings = () => {
   const rooms = JSON.parse(JSON.stringify(defaults.rooms));
   const labs = JSON.parse(JSON.stringify(defaults.labs)).map((l) => ({ ...l, girls: true }));
   const order = allBuildingsOf(rooms, labs, defaults.buildingOrder);
-  return { rooms, labs, buildingOrder: order, buildingsOn: order.slice(), girlsOk: {}, cbGroups: [], pins: {} };
+  return { rooms, labs, buildingOrder: order, buildingsOn: order.slice(), girlsOk: {}, cbGroups: [], pins: {}, girlsLate: { on: true, after: '17:30' } };
 };
 function loadSettings() {
   try {
@@ -29,7 +29,7 @@ function loadSettings() {
       const labs = (s.labs || f.labs).map((l) => orig({ girls: true, ...l }));
       const rooms = s.rooms.map(orig);
       const order = allBuildingsOf(rooms, labs, s.buildingOrder || f.buildingOrder);
-      return { ...f, ...s, rooms, labs, buildingOrder: order, buildingsOn: s.buildingsOn || order.slice() };
+      return { ...f, ...s, rooms, labs, buildingOrder: order, buildingsOn: s.buildingsOn || order.slice(), girlsLate: s.girlsLate || f.girlsLate };
     }
   } catch { /* storage unavailable or empty */ }
   return freshSettings();
@@ -204,7 +204,8 @@ export default function App() {
   }, [adm]);
   // Students of one batch at one time slot: all of them, or the part given by s.parts[batch] = [from, to) (RPT splits a
   // batch across times when a time has fewer lab seats than students)
-  const stuOf = (s, b) => { const all = studentsByBatch[b] || [], pt = s.parts && s.parts[b]; return pt ? all.slice(pt[0], pt[1]) : all; };
+  // s.rolls[batch]: the exact students after the RPT girls rule moved some of them (wins over s.parts)
+  const stuOf = (s, b) => { const all = studentsByBatch[b] || [], pt = s.parts && s.parts[b]; if (s.rolls && s.rolls[b]) { const set = new Set(s.rolls[b]); return all.filter((x) => set.has(x.Roll_Number)); } return pt ? all.slice(pt[0], pt[1]) : all; };
   const courses = useMemo(() => [...new Set(batches.map((b) => b.course).filter((c) => String(c || '').trim()))].sort(naturalCompare), [batches]);
   const phaseList = useMemo(() => parsePhaseList(settings.phaseText || ''), [settings.phaseText]);
   const phases = useMemo(() => groupPhases(batches, phaseList.phases), [batches, phaseList]);
@@ -667,7 +668,7 @@ export default function App() {
               ))}
             </details>
             <details className="fold">
-              <summary>Seating rules <span className="muted">· {SEAT_ORDERS[settings.seatOrder || 'mixed']}{!['mixed', 'roll'].includes(settings.seatOrder || 'mixed') && settings.seatOrder2 && settings.seatOrder2 !== settings.seatOrder ? `, then ${SEAT_ORDERS[settings.seatOrder2].toLowerCase()}` : ''}{settings.apart ? ' · brothers and sisters apart' : ''}</span></summary>
+              <summary>Seating rules <span className="muted">· {SEAT_ORDERS[settings.seatOrder || 'mixed']}{!['mixed', 'roll'].includes(settings.seatOrder || 'mixed') && settings.seatOrder2 && settings.seatOrder2 !== settings.seatOrder ? `, then ${SEAT_ORDERS[settings.seatOrder2].toLowerCase()}` : ''}{settings.apart ? ' · brothers and sisters apart' : ''}{settings.girlsLate?.on !== false ? ` · no girls from ${fmtTime(settings.girlsLate?.after || '17:30')}` : ''}</span></summary>
               <SeatRules settings={settings} setSettings={setSettings} students={adm?.students || []} />
             </details>
             <details className="fold">
@@ -684,7 +685,7 @@ export default function App() {
           <PaperStep key={step} part={step === 'mode' ? 'mode' : 'setup'} scene={step === 'mode' ? <Scene kind="split" online={sceneTotals.online} offline={sceneTotals.offline} /> : <Scene kind="calendar" date={test.date} time={firstSlot && firstSlot.start} />} setupReady={setupReady} goMode={() => setStep('mode')} goTest={() => setStep('test')} test={test} setTest={setTest} setPaper={setPaper} setSlot={setSlot} courses={courses} phases={phases} ownerOf={ownerOf} slotOf={slotOf}
             batchMap={batchMap} phaseBatches={phaseBatches} studentsByBatch={studentsByBatch} studentMode={studentMode} setStudentMode={setStudentMode}
             sumSlot={sumSlot} paperOk={paperOk} start={startPaper} back={() => setStep(step === 'mode' ? 'test' : 'students')} labSeatsOf={labSeatsOf} labsOf={labsOf} adjustLabs={adjustLabs} setLabCap={setLabCap}
-            blds={settings.buildingOrder.filter((b) => roomsOn.some((r) => r.building === b))} />
+            blds={settings.buildingOrder.filter((b) => roomsOn.some((r) => r.building === b))} girlsRule={settings.girlsLate || { on: true, after: '17:30' }} />
         )}
 
         {step === 'labs' && curP && (
@@ -821,7 +822,7 @@ function Nav({ back, next, nextOk = true, nextLabel = 'Continue', hint, children
   );
 }
 
-function PaperStep({ scene = null, part = 'setup', setupReady, goMode, goTest, test, setTest, setPaper, setSlot, courses, phases, ownerOf, slotOf, phaseBatches, studentsByBatch, studentMode, setStudentMode, sumSlot, paperOk, start, back, labSeatsOf, labsOf, adjustLabs, setLabCap, blds }) {
+function PaperStep({ scene = null, part = 'setup', setupReady, goMode, goTest, test, setTest, setPaper, setSlot, courses, phases, ownerOf, slotOf, phaseBatches, studentsByBatch, studentMode, setStudentMode, sumSlot, paperOk, start, back, labSeatsOf, labsOf, adjustLabs, setLabCap, blds, girlsRule }) {
   const topOf = (p) => new Set(p.top || []);
   const setTopOf = (p) => (fn) => setPaper(p.id, { top: [...fn(new Set(p.top || []))] });
   const addPaper = () => setTest({ ...test, papers: [...test.papers, newPaper()] });
@@ -833,7 +834,8 @@ function PaperStep({ scene = null, part = 'setup', setupReady, goMode, goTest, t
   };
   const cardOf = (p, i) => (kind === 'RPT' ? (
     <RptCard key={p.id} part={part} p={p} i={i} n={test.papers.length} setPaper={setPaper} remove={() => removePaper(p.id)} courses={courses} phases={phases} sumSlot={sumSlot} ok={paperOk(p)} start={() => start(p)} top={topOf(p)} setTop={setTopOf(p)} blds={blds}
-      labSeats={labSeatsOf(p)} labsOn={labsOf(p)} adjustLabs={(how, v) => adjustLabs(p, how, v)} setLabCap={(k, v) => setLabCap(p, k, v)} />
+      labSeats={labSeatsOf(p)} labsOn={labsOf(p)} adjustLabs={(how, v) => adjustLabs(p, how, v)} setLabCap={(k, v) => setLabCap(p, k, v)}
+      swapCtx={{ rule: girlsRule, studentsOf: (b) => (studentsByBatch[b] || []).map((x) => ({ roll: x.Roll_Number, girl: isGirl(x) })) }} />
   ) : (
     <PaperCard key={p.id} part={part} p={p} i={i} n={test.papers.length} setPaper={setPaper} setSlot={setSlot} remove={() => removePaper(p.id)}
       courses={courses} phases={phases} ownerOf={ownerOf} slotOf={slotOf} phaseBatches={phaseBatches}
@@ -939,7 +941,7 @@ const keepBatches = (s, phases, keys) => {
 const rptTimes = (two) => (two
   ? [{ start: '06:00', end: '09:00', s2: { start: '14:00', end: '17:00' } }, { start: '10:00', end: '13:00', s2: { start: '17:30', end: '20:30' } }]
   : [{ start: '06:00', end: '09:00' }, { start: '10:00', end: '13:00' }, { start: '14:00', end: '17:00' }, { start: '17:30', end: '20:30' }]);
-const rptDefault = () => ({ phases: [], mode: '', two: false, times: rptTimes(false), noGirlsLast: true });
+const rptDefault = () => ({ phases: [], mode: '', two: false, times: rptTimes(false) });
 // The time that ends last (its last shift ends latest): no girls there when "No girls in the last time" is on
 export const lastTimeOf = (r) => {
   const endOf = (t) => mins(r.two && t.s2 ? t.s2.end : t.end);
@@ -951,7 +953,7 @@ export const lastTimeOf = (r) => {
 export function rptPlan(r, phases, cap, sep = null) {
   const batches = phases.filter((g) => r.phases.includes(g.key)).flatMap((g) => g.batches).filter((b) => !(sep && sep.batches.includes(b.batch)));
   const fill = r.mode === 'Offline' ? 'equal' : (r.fill || 'labs');
-  return rptFill({ batches, n: r.times.length, cap, fill, noGirlsAt: r.noGirlsLast === false ? -1 : lastTimeOf(r), pins: r.pins || {}, outs: r.outs || {}, reserve: sep ? sep.reserve : {} });
+  return rptFill({ batches, n: r.times.length, cap, fill, noGirlsAt: -1, pins: r.pins || {}, outs: r.outs || {}, reserve: sep ? sep.reserve : {} });
 }
 const shiftsOfTime = (r, t) => [{ start: t.start, end: t.end }, ...(r.two && t.s2 ? [t.s2] : [])];
 // Top batches seated separately (p.topSep, asked at the top of the RPT card): their own seating with its own mode,
@@ -973,16 +975,23 @@ export function topSepOf(p, r, phases, labsOn = []) {
     batches: list.map((b) => b.batch), count: list.reduce((a, b) => a + b.count, 0), girls: list.some((b) => b.girls > 0),
     reserve: Object.fromEntries(over.map((i) => [i, seats])) };
 }
-export function rptSlots(p, r, phases, cap, labsOn = []) {
+// Girls rule (page 1, Seating rules): a time is late when any of its shifts starts at or after the cut-off
+export const lateTimes = (r, rule) => new Set(rule && rule.on !== false ? r.times.map((t, i) => (shiftsOfTime(r, t).some((x) => mins(x.start) >= mins(rule.after || '17:30')) ? i : -1)).filter((i) => i >= 0) : []);
+export function rptSlots(p, r, phases, cap, labsOn = [], ctx = null) {
   const sep = topSepOf(p, r, phases, labsOn);
   const { lists } = rptPlan(r, phases, cap, sep);
+  const late = ctx ? lateTimes(r, ctx.rule) : new Set();
+  const sw = late.size && late.size < r.times.length ? girlSwap({ lists, late, studentsOf: ctx.studentsOf, donor: r.donor || '' }) : null;
+  const moved = sw && sw.girls > 0;
+  if (moved) lists.forEach((L, i) => { L.batches = Object.keys(sw.at[i]).filter((b) => sw.at[i][b].length); L.rolls = Object.fromEntries(L.batches.map((b) => [b, sw.at[i][b].map((s) => s.roll)])); L.parts = {}; });
   return r.times.map((t, i) => {
     const L = lists[i];
     if (!L || !L.batches.length) return null;
     const id = `${p.id}-t${i}`, old = p.slots.find((x) => x.id === id) || {};
     return { ...newSlot(t.start, t.end), ...old, labs: null, buildings: null, offLabs: [], roomsOff: [], id, name: `Time ${i + 1}`, mode: r.mode, phases: r.phases, start: t.start, end: t.end, two: !!r.two,
       s2: r.two ? (t.s2 || { start: hhmm(mins(t.end) + 120), end: hhmm(mins(t.end) + 120 + mins(t.end) - mins(t.start)) }) : (old.s2 || newSlot(t.start, t.end).s2),
-      batches: L.batches, parts: L.parts, online: r.mode === 'Both' ? L.batches : [] };
+      batches: L.batches, parts: L.parts, rolls: L.rolls || null, online: r.mode === 'Both' ? L.batches : [],
+      swap: sw && late.has(i) ? { girls: sw.girls, left: sw.left, girlBatches: sw.girlBatches, donors: sw.donors, cand: sw.cand } : null };
   }).filter(Boolean).concat(sep ? [{ ...newSlot(sep.start, sep.end), id: `${p.id}-top`, top: true, name: 'Top batches', mode: sep.mode, phases: r.phases,
     start: sep.start, end: sep.end, two: sep.two, s2: sep.s2 || newSlot(sep.start, sep.end).s2, batches: sep.batches, parts: {},
     online: sep.mode === 'Both' ? sep.batches : [], labs: sep.labs, buildings: sep.blds, offLabs: [], roomsOff: [] }] : []);
@@ -990,15 +999,15 @@ export function rptSlots(p, r, phases, cap, labsOn = []) {
 // pins and outs are kept by time number: removing time k drops its entry and moves the later ones up
 const dropTime = (m, k) => Object.fromEntries(Object.entries(m || {}).filter(([i]) => Number(i) !== k).map(([i, v]) => [Number(i) > k ? Number(i) - 1 : Number(i), v]));
 
-function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, sumSlot, ok, start, top, setTop, labSeats, labsOn, adjustLabs, setLabCap, blds }) {
+function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, sumSlot, ok, start, top, setTop, labSeats, labsOn, adjustLabs, setLabCap, blds, swapCtx = null }) {
   const r = p.rpt || rptDefault();
-  const apply = (patch, extra = {}) => { const nr = { ...r, ...patch }; const np = { ...p, ...extra, rpt: nr }; setPaper(p.id, { ...extra, rpt: nr, slots: rptSlots(np, nr, phases, labSeats, labsOn) }); };
+  const apply = (patch, extra = {}) => { const nr = { ...r, ...patch }; const np = { ...p, ...extra, rpt: nr }; setPaper(p.id, { ...extra, rpt: nr, slots: rptSlots(np, nr, phases, labSeats, labsOn, swapCtx) }); };
   // Lab seats changed (or a new admission list): spread the batches again
   useEffect(() => {
     if (!r.phases.length || !r.mode) return;
-    const ns = rptSlots(p, r, phases, labSeats, labsOn);
+    const ns = rptSlots(p, r, phases, labSeats, labsOn, swapCtx);
     if (JSON.stringify(ns) !== JSON.stringify(p.slots)) setPaper(p.id, { slots: ns });
-  }, [labSeats, phases, JSON.stringify(p.top || []), JSON.stringify(p.topSep || null)]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [labSeats, phases, JSON.stringify(swapCtx && swapCtx.rule), JSON.stringify(p.top || []), JSON.stringify(p.topSep || null)]); // eslint-disable-line react-hooks/exhaustive-deps
   const mine = phases.filter((g) => p.courses.includes(g.course));
   const toggleCourse = (c) => {
     const cs = toggleIn(p.courses, c);
@@ -1028,14 +1037,15 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
   const toggleTop = (b) => setTop((t) => { const x = new Set(t); x.has(b) ? x.delete(b) : x.add(b); return x; });
   const info = Object.fromEntries(mine.flatMap((g) => g.batches).map((b) => [b.batch, b]));
   const anyGirls = mine.some((g) => g.batches.some((b) => b.girls > 0));
-  const last = r.noGirlsLast === false ? -1 : lastTimeOf(r);
+  const late = lateTimes(r, swapCtx && swapCtx.rule);
+  const cutoff = swapCtx && swapCtx.rule ? swapCtx.rule.after || '17:30' : '17:30';
   const byLabs = r.mode !== 'Offline' && (r.fill || 'labs') === 'labs';
   const sep = r.phases.length && r.mode ? topSepOf(p, r, phases, labsOn) : null;
   const plan = r.phases.length && r.mode ? rptPlan(r, phases, labSeats, sep) : { lists: [], left: 0, leftBatches: [] };
   const kept = (k) => (sep && sep.reserve[k]) || 0;
   const sepOn = !!(p.topSep && p.topSep.on);
   const sepReady = !sepOn || !!sep;
-  const partN = (s, b) => (s.parts && s.parts[b] ? s.parts[b][1] - s.parts[b][0] : info[b]?.count || 0);
+  const partN = (s, b) => (s.rolls && s.rolls[b] ? s.rolls[b].length : s.parts && s.parts[b] ? s.parts[b][1] - s.parts[b][0] : info[b]?.count || 0);
   const count = (s) => s.batches.reduce((a, b) => a + partN(s, b), 0);
   const sel = mine.filter((g) => r.phases.includes(g.key));
   return (
@@ -1062,7 +1072,7 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
           </div>
         </div>
       )}
-      {part === 'mode' && r.phases.length > 0 && <TopSep p={p} r={r} setPaper={setPaper} sel={sel} info={info} labs={labsOn} blds={blds} sep={sep} last={last} />}
+      {part === 'mode' && r.phases.length > 0 && <TopSep p={p} r={r} setPaper={setPaper} sel={sel} info={info} labs={labsOn} blds={blds} sep={sep} cutoff={late.size ? cutoff : ''} />}
       {part === 'mode' && r.phases.length > 0 && (
         <div className="q">
           <b className="q-l">3. Online or offline?{sepOn ? ' (all other students)' : ''}</b>
@@ -1089,8 +1099,8 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
               <button className={!byLabs ? 'on' : ''} onClick={() => apply({ fill: 'equal' })}>About equal students at each time</button>
             </div>
           )}
-          <label className="small"><input type="checkbox" checked={r.noGirlsLast !== false} onChange={(e) => apply({ noGirlsLast: e.target.checked })} /> No girls in the last time (batches with girls go to the earlier times)</label>
-          {r.noGirlsLast !== false && !anyGirls && <p className="small bad">The admission list has no girls marked (no Gender values), so this rule cannot work.</p>}
+          {late.size > 0 && !anyGirls && <p className="small bad">Girls rule (no girls from {fmtTime(cutoff)}): the admission list has no girls marked (no Gender values), so it cannot work.</p>}
+          {late.size > 0 && late.size === r.times.length && <p className="small bad">Every time starts at or after {fmtTime(cutoff)}, so the girls rule has no earlier time to move girls to.</p>}
           {manual && <p className="small">You moved batches by hand. <button className="link" onClick={() => apply({ pins: {}, outs: {} })}>Undo my changes</button></p>}
           {r.times.map((t, k) => {
             const s = p.slots.find((x) => x.id === `${p.id}-t${k}`);
@@ -1102,11 +1112,13 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
                 {r.two && <TimeRow label="Shift 2" value={t.s2} onChange={(v) => setTime(k, { s2: v })} />}
                 {s ? (
                   <>
-                    <p className="rpt-batches"><b>{pl(count(s), 'student')}</b>{byLabs ? ` of ${labSeats - kept(k)} lab seats${kept(k) ? ` (${kept(k)} blocked for top batches)` : ''}` : ''} · {pl(s.batches.length, 'batch')}{k === last ? ' · no girls' : s.batches.some((b) => info[b]?.girls > 0) ? ' · has girls' : ''}</p>
+                    <p className="rpt-batches"><b>{pl(count(s), 'student')}</b>{byLabs ? ` of ${labSeats - kept(k)} lab seats${kept(k) ? ` (${kept(k)} blocked for top batches)` : ''}` : ''} · {pl(s.batches.length, 'batch')}{late.has(k) ? ' · no girls' : s.batches.some((b) => info[b]?.girls > 0) ? ' · has girls' : ''}</p>
+                    {s.swap && s.swap.girls > 0 && <GirlsMoved sw={s.swap} cutoff={cutoff} donor={r.donor || ''} pick={(b) => apply({ donor: b })} />}
+                    {s.swap && s.swap.left > 0 && <p className="small bad">{pl(s.swap.left, 'girl')} still at this time: not enough boys at the earlier times to swap with. Add another earlier time or move a batch.</p>}
                     <div className="chips">
                       {s.batches.map((b) => {
                         const pt = s.parts && s.parts[b];
-                        const label = <>{top.has(b) ? '★ ' : ''}{b}{pt ? ` · ${pt[0] + 1} to ${pt[1]}` : ''} <small>{partN(s, b)}</small></>;
+                        const label = <>{top.has(b) ? '★ ' : ''}{b}{pt ? ` · ${pt[0] + 1} to ${pt[1]}` : s.rolls && s.rolls[b] && s.rolls[b].length !== info[b]?.count ? ' · part' : ''} <small>{partN(s, b)}</small></>;
                         return (
                           <span key={b} className="chip-pair">
                             {r.mode === 'Offline' || sepOn
@@ -1128,7 +1140,7 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
             );
           })}
           {plan.left > 0 && (
-            <p className="small bad">{pl(plan.left, 'student')} have no time yet: {plan.leftBatches.map((x) => `${x.batch} (${x.n})`).join(', ')}. Add another time, add lab seats{r.noGirlsLast !== false ? ', switch off “No girls in the last time”' : ''}, or put their batch at a time with Add a batch.</p>
+            <p className="small bad">{pl(plan.left, 'student')} have no time yet: {plan.leftBatches.map((x) => `${x.batch} (${x.n})`).join(', ')}. Add another time, add lab seats, or put their batch at a time with Add a batch.</p>
           )}
           <button type="button" className="addslot sm" onClick={addTime}>{Ico.plus}Add another time</button>
         </div>
@@ -1148,7 +1160,7 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
 // RPT, asked at the top: seat the top batches separately? Yes: pick the top batches, then online or offline, 1 or 2
 // shifts, their time, and the labs (or buildings) they sit in. Those labs and rooms are blocked for every other student
 // at that time; the others sit in the other labs, and in the top batches' labs at the times the top batches are not there.
-function TopSep({ p, r, setPaper, sel, info, labs, blds, sep, last }) {
+function TopSep({ p, r, setPaper, sel, info, labs, blds, sep, cutoff }) {
   const t = p.topSep || {};
   const set = (v) => setPaper(p.id, { topSep: { ...t, ...v } });
   const top = p.top || [];
@@ -1188,7 +1200,7 @@ function TopSep({ p, r, setPaper, sel, info, labs, blds, sep, last }) {
         <TimeRow label={t.two ? 'Shift 1' : 'Time'} value={{ start: t.start || '', end: t.end || '' }} onChange={(v) => set(v)} />
         {t.two && <TimeRow label="Shift 2" value={t.s2 || { start: '', end: '' }} onChange={(v) => set({ s2: { ...(t.s2 || {}), ...v } })} />}
         {sep && sep.over.length > 0 && <p className="small">Overlaps {sep.over.map((i) => `Time ${i + 1}`).join(' and ')}: the labs and rooms picked below are blocked for the other students at that time.</p>}
-        {sep && sep.girls && sep.over.includes(last) && <p className="small bad">This overlaps the last time and a top batch has girls (no girls in the last time).</p>}
+        {sep && sep.girls && cutoff && [sep.start, ...(sep.s2 ? [sep.s2.start] : [])].some((x) => mins(x) >= mins(cutoff)) && <p className="small bad">A top batch has girls and this time starts at or after {fmtTime(cutoff)} (girls rule). Pick an earlier time.</p>}
         {t.mode && <>
           <b className="q-l">e. {t.mode === 'Offline' ? 'Buildings' : t.mode === 'Both' ? 'Labs, then buildings for the rest' : 'Labs'} where they sit</b>
           {t.mode !== 'Offline' && <div className="chips"><span className="small muted">Labs</span>{labs.map((l) => { const k = roomKey(l); return <button key={k} type="button" className={`chip-btn ${tl.includes(k) ? 'on' : ''}`} onClick={() => tog('labs', k)}>{l.building} · {l.room} <small>{l.capacity}</small></button>; })}</div>}
@@ -1197,6 +1209,24 @@ function TopSep({ p, r, setPaper, sel, info, labs, blds, sep, last }) {
         </>}
         {!sep && <p className="small bad">Still to answer: {[!top.length && 'top batches', !t.mode && 'online or offline', !(t.start && t.end) && 'time', t.mode && t.mode !== 'Offline' && !tl.length && 'labs', t.mode === 'Offline' && !tb.length && 'buildings'].filter(Boolean).join(', ') || 'check the times'}.</p>}
       </>}
+    </div>
+  );
+}
+
+// Late time (girls rule): which girls moved to the earlier times, and which boys' batch came here in their place.
+// The operator can pick the batch whose boys move first.
+function GirlsMoved({ sw, cutoff, donor, pick }) {
+  return (
+    <div className="small girlsmoved">
+      <p><b>Girls rule:</b> no girls from {fmtTime(cutoff)}, so {pl(sw.girls, 'girl')} of {sw.girlBatches.join(', ')} moved to earlier times, and boys of {sw.donors.map((d) => `${d.batch} (${d.n})`).join(', then ')} moved here in their place.</p>
+      {sw.cand.length > 1 && (
+        <label className="field inline"><span>Boys to move here first, from batch</span>
+          <select value={donor && sw.cand.some((c) => c.batch === donor) ? donor : ''} onChange={(e) => pick(e.target.value)}>
+            <option value="">Automatic ({sw.cand[0].batch})</option>
+            {sw.cand.map((c) => <option key={c.batch} value={c.batch}>{c.batch} · {pl(c.boys, 'boy')}</option>)}
+          </select>
+        </label>
+      )}
     </div>
   );
 }
@@ -1758,6 +1788,9 @@ function SeatRules({ settings, setSettings, students }) {
         const n = students.filter((x) => String(x[k] || '').trim()).length;
         return n < students.length ? <p className="small bad">{n === 0 ? `The admission list has no ${w} column (or it is empty), so seats would follow roll numbers. Add a ${k} column.` : `${students.length - n} students have no ${w}; they are seated last.`}</p> : <p className="muted small">{w[0].toUpperCase() + w.slice(1)} found for all {students.length} students.</p>;
       })()}
+      <label className="small"><input type="checkbox" checked={settings.girlsLate?.on !== false} onChange={(e) => setSettings((x) => ({ ...x, girlsLate: { after: '17:30', ...(x.girlsLate || {}), on: e.target.checked } }))} /> RPT: no girls in a paper that starts at or after
+        {' '}<input type="time" value={settings.girlsLate?.after || '17:30'} onChange={(e) => setSettings((x) => ({ ...x, girlsLate: { on: true, ...(x.girlsLate || {}), after: e.target.value || '17:30' } }))} aria-label="Girls rule time" />
+        {' '}(their girls swap places with boys of one batch from an earlier time)</label>
       <label className="small"><input type="checkbox" checked={!!settings.apart} onChange={(e) => setSettings((x) => ({ ...x, apart: e.target.checked }))} /> Keep brothers and sisters apart (same father's name or same contact number never side by side)</label>
       <p className="small"><b>SMD sheet groups</b></p>
       {groups.map((g, i) => (
