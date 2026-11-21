@@ -111,36 +111,38 @@ export function buildWorkbookAll(ExcelJS, items, day) {
   const seatingSheet = (sheetName, keep) => {
     const ws = wb.addWorksheet(sheetName);
     ws.columns = [9.66, 10.55, 10.66, 10.11, 10.78, 9.66, 10.55, 10.66, 10.11].map((w) => ({ width: w }));
+    // One list for the whole day (operator, 21 Nov 2026): every paper, online and offline together, sorted by roll number
+    const seen = new Set();
+    const rows = P.flatMap((p) => p.rows).filter(keep).filter((st) => (seen.has(st.Roll_Number) ? false : seen.add(st.Roll_Number)))
+      .sort((a, b) => naturalCompare(a.Roll_Number, b.Roll_Number));
+    const on = rows.some((st) => st.Mode === 'Online'), off = rows.some((st) => st.Mode !== 'Online');
+    const modeLabel = on && off ? 'Online+Offline Test' : on ? 'Online Test' : 'Offline Test';
+    const batches = [...new Set(P.flatMap((p) => String(p.meta.batchesLabel || '').split(', ').filter(Boolean)))];
+    const starts = [...new Set(P.flatMap((p) => p.shiftStarts))].sort((a, b) => a.localeCompare(b));
     let r = 1;
-    if (many) { titleRow(ws, r, day.dayTitle || 'Test Seating Arrangement', 9, { bold: true, size: 22, color: C.navy, bg: C.titleFill, border: med }); ws.getRow(r).height = 32; r += 2; }
-    P.forEach((p, pi) => {
-      const rows = p.rows.filter(keep);
-      titleRow(ws, r, many ? p.meta.title : day.dayTitle || p.meta.title, 9, { bold: true, size: many ? 16 : 22, color: C.navy, bg: C.titleFill, border: med });
-      ws.getRow(r).height = 41.7; r++;
-      ws.getRow(r).height = 23.85; titleRow(ws, r++, `Mode: ${p.meta.modeLabel}`, 9, { bold: true, size: 13, color: C.navy, bg: C.subFill, border: med });
-      ws.getRow(r).height = 23.85; titleRow(ws, r++, `Batch: ${p.meta.batchesLabel}`, 9, { bold: true, size: 12, color: C.navy, bg: C.bTotFill, border: med });
-      const left = { horizontal: 'left', vertical: 'middle', wrapText: true };
-      ws.mergeCells(r, 1, r, 4); ws.mergeCells(r, 6, r, 9);
-      ws.getCell(r, 1).value = `Date:- ${fmtDateDMY(dateISO)}`;
-      ws.getCell(r, 6).value = p.shiftStarts.map((t, k) => `Shift${k + 1}:- ${fmtTime(t)}`).join(',    ');
-      for (let c = 1; c <= 9; c++) style(ws.getCell(r, c), { bold: true, size: 12, color: C.navy, bg: C.bTotFill, border: c === 5 ? null : med, align: c < 5 ? left : center });
-      ws.getRow(r).height = 23.85; r++;
-      ws.getRow(r).height = 19.8;
-      ['Reg. No.', 'Building', 'Room No.', 'Seat No.'].forEach((h, k) => {
-        [k + 1, k + 6].forEach((col) => { const c = ws.getCell(r, col); c.value = h; style(c, { bold: true, size: 11, color: C.green, bg: C.headFill, border: med }); });
-      });
-      r++;
-      const half = Math.ceil(rows.length / 2);
-      for (let k = 0; k < half; k++) {
-        [[rows[k], 1], [rows[k + half], 6]].forEach(([st, col]) => {
-          if (!st) return;
-          [asNum(st.Roll_Number), st.Building, roomVal(st['Room No.']), st['Seat No.']].forEach((v, jj) => { const c = ws.getCell(r + k, col + jj); c.value = v; style(c); });
-        });
-      }
-      r += half;
-      if (pi < P.length - 1) { ws.getRow(r - 1).addPageBreak(); r += 1; }
+    titleRow(ws, r, day.dayTitle || P[0]?.meta.title || 'Seating Arrangement', 9, { bold: true, size: 22, color: C.navy, bg: C.titleFill, border: med });
+    ws.getRow(r).height = 41.7; r++;
+    ws.getRow(r).height = 23.85; titleRow(ws, r++, `Mode: ${modeLabel}`, 9, { bold: true, size: 13, color: C.navy, bg: C.subFill, border: med });
+    ws.getRow(r).height = 23.85; titleRow(ws, r++, `Batch: ${batches.join(', ')}`, 9, { bold: true, size: 12, color: C.navy, bg: C.bTotFill, border: med });
+    const left = { horizontal: 'left', vertical: 'middle', wrapText: true };
+    ws.mergeCells(r, 1, r, 4); ws.mergeCells(r, 6, r, 9);
+    ws.getCell(r, 1).value = `Date:- ${fmtDateDMY(dateISO)}`;
+    ws.getCell(r, 6).value = starts.map((t, k) => `Shift${k + 1}:- ${fmtTime(t)}`).join(',    ');
+    for (let c = 1; c <= 9; c++) style(ws.getCell(r, c), { bold: true, size: 12, color: C.navy, bg: C.bTotFill, border: c === 5 ? null : med, align: c < 5 ? left : center });
+    ws.getRow(r).height = 23.85; r++;
+    ws.getRow(r).height = 19.8;
+    ['Reg. No.', 'Building', 'Room No.', 'Seat No.'].forEach((h, k) => {
+      [k + 1, k + 6].forEach((col) => { const c = ws.getCell(r, col); c.value = h; style(c, { bold: true, size: 11, color: C.green, bg: C.headFill, border: med }); });
     });
-    ws.pageSetup = { orientation: 'portrait', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: MARGINS, ...(many ? {} : { printTitlesRow: '5:5' }) };
+    r++;
+    const half = Math.ceil(rows.length / 2);
+    for (let k = 0; k < half; k++) {
+      [[rows[k], 1], [rows[k + half], 6]].forEach(([st, col]) => {
+        if (!st) return;
+        [asNum(st.Roll_Number), st.Building, roomVal(st['Room No.']), st['Seat No.']].forEach((v, jj) => { const c = ws.getCell(r + k, col + jj); c.value = v; style(c); });
+      });
+    }
+    ws.pageSetup = { orientation: 'portrait', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: MARGINS, printTitlesRow: '5:5' };
   };
   seatingSheet('Seating Arrangement', (st) => st.Flag !== 'Due fee');
   seatingSheet('Seating Arrangement (All)', () => true);
@@ -168,7 +170,7 @@ export function buildWorkbookAll(ExcelJS, items, day) {
         const occ = inRoom(p.rows, room).filter((s) => !g.paper || s.Paper === g.paper).sort((a, b) => a['Seat No.'] - b['Seat No.']);
         if (g.paper && !occ.length) continue;
         const ncol = 3 + g.labels.length;
-        titleRow(ws, r++, `${many ? `${p.name}  |  ` : ''}${room.building}  |  Room ${room.room}  |  ${fmtDateLong(dateISO)}  |  ${g.labels.join(' & ')}  (${occ.length} students)`, ncol,
+        titleRow(ws, r++, `${room.building}  |  Room ${room.room}  |  ${fmtDateLong(dateISO)}  |  ${g.labels.join(' & ')}  (${occ.length} students)`, ncol,
           { bold: true, size: 12, color: C.navy, bg: C.titleFill });
         ws.getRow(r - 1).height = 21.75;
         head(ws, r, ['Reg. No.', 'Student Name', 'Seat No.', ...g.labels.map((l) => `Signature  (${l})`)], { bold: true, size: 11, color: C.green, bg: C.headFill });
