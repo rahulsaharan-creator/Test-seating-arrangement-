@@ -65,7 +65,7 @@ export function buildWorkbookAll(ExcelJS, items, day) {
   const P = items.map(({ result, meta }) => ({
     meta, result, name: meta.paper || meta.title,
     rows: result.assigned.slice().sort((a, b) => naturalCompare(a.Roll_Number, b.Roll_Number)),
-    rooms: result.usedRooms, shiftLabels: labelsOf(meta),
+    rooms: result.usedRooms, shiftLabels: labelsOf(meta), shiftStarts: (meta.slots && meta.slots.length ? meta.slots.map((x) => x.start) : meta.shifts || []).filter(Boolean),
   }));
   const dateISO = day.dateISO || items[0]?.meta.dateISO;
   const dateVal = (() => { const { y, m, d } = parseDate(dateISO); return new Date(Date.UTC(y, m - 1, d)); })();
@@ -105,34 +105,43 @@ export function buildWorkbookAll(ExcelJS, items, day) {
   }
 
   // ---------- Seating Arrangement (two side-by-side columns, sorted by roll number; one block per paper)
-  {
-    const ws = wb.addWorksheet('Seating Arrangement');
+  // Two sheets, as in the 22 Nov Impulse sheet: "Seating Arrangement" leaves out the due fee students,
+  // "Seating Arrangement (All)" has everyone (due fee, monitoring and all others).
+  const seatingSheet = (sheetName, keep) => {
+    const ws = wb.addWorksheet(sheetName);
     ws.columns = [12.7, 10.8, 10.6, 9.1, 4, 12.7, 10.8, 10.6, 9.1].map((w) => ({ width: w }));
-    const sub = { bold: true, size: 13, color: C.navy, bg: C.subFill, border: med };
     let r = 1;
     if (many) { titleRow(ws, r, day.dayTitle || 'Test Seating Arrangement', 9, { bold: true, size: 22, color: C.navy, bg: C.titleFill, border: med }); ws.getRow(r).height = 32; r += 2; }
     P.forEach((p, pi) => {
-      titleRow(ws, r, p.meta.title, 9, { bold: true, size: many ? 16 : 22, color: C.navy, bg: C.titleFill, border: med });
+      const rows = p.rows.filter(keep);
+      titleRow(ws, r, many ? p.meta.title : day.dayTitle || p.meta.title, 9, { bold: true, size: many ? 16 : 22, color: C.navy, bg: C.titleFill, border: med });
       ws.getRow(r).height = many ? 26 : 32; r++;
-      titleRow(ws, r++, `Mode: ${p.meta.modeLabel}`, 9, sub);
-      titleRow(ws, r++, `Batch: ${p.meta.batchesLabel}`, 9, sub);
-      titleRow(ws, r++, `Date:- ${fmtDateDMY(dateISO)}          Time:- ${p.shiftLabels.join(' & ')}`, 9, sub);
-      ['Reg. No.', 'Building', 'Room No.', 'Seat No.'].forEach((h, i) => {
-        [i + 1, i + 6].forEach((col) => { const c = ws.getCell(r, col); c.value = h; style(c, { bold: true, size: 11, color: C.green, bg: C.headFill, border: med }); });
+      titleRow(ws, r++, `Mode: ${p.meta.modeLabel}`, 9, { bold: true, size: 13, color: C.navy, bg: C.subFill, border: med });
+      titleRow(ws, r++, `Batch: ${p.meta.batchesLabel}`, 9, { bold: true, size: 12, color: C.navy, bg: C.bTotFill, border: med });
+      const left = { horizontal: 'left', vertical: 'middle', wrapText: true };
+      ws.mergeCells(r, 1, r, 4); ws.mergeCells(r, 6, r, 9);
+      ws.getCell(r, 1).value = `Date:- ${fmtDateDMY(dateISO)}`;
+      ws.getCell(r, 6).value = p.shiftStarts.map((t, k) => `Shift${k + 1}:- ${fmtTime(t)}`).join(',    ');
+      for (let c = 1; c <= 9; c++) style(ws.getCell(r, c), { bold: true, size: 12, color: C.navy, bg: C.bTotFill, border: c === 5 ? null : med, align: left });
+      r++;
+      ['Reg. No.', 'Building', 'Room No.', 'Seat No.'].forEach((h, k) => {
+        [k + 1, k + 6].forEach((col) => { const c = ws.getCell(r, col); c.value = h; style(c, { bold: true, size: 11, color: C.green, bg: C.headFill, border: med }); });
       });
       r++;
-      const half = Math.ceil(p.rows.length / 2);
-      for (let i = 0; i < half; i++) {
-        [[p.rows[i], 1], [p.rows[i + half], 6]].forEach(([s, col]) => {
-          if (!s) return;
-          [asNum(s.Roll_Number), s.Building, roomVal(s['Room No.']), s['Seat No.']].forEach((v, j) => { const c = ws.getCell(r + i, col + j); c.value = v; style(c); });
+      const half = Math.ceil(rows.length / 2);
+      for (let k = 0; k < half; k++) {
+        [[rows[k], 1], [rows[k + half], 6]].forEach(([st, col]) => {
+          if (!st) return;
+          [asNum(st.Roll_Number), st.Building, roomVal(st['Room No.']), st['Seat No.']].forEach((v, jj) => { const c = ws.getCell(r + k, col + jj); c.value = v; style(c); });
         });
       }
       r += half;
       if (pi < P.length - 1) { ws.getRow(r - 1).addPageBreak(); r += 1; }
     });
     ws.pageSetup = { orientation: 'portrait', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0, ...(many ? {} : { printTitlesRow: '5:5' }) };
-  }
+  };
+  seatingSheet('Seating Arrangement', (st) => st.Flag !== 'Due fee');
+  seatingSheet('Seating Arrangement (All)', () => true);
 
   // ---------- Attendance: one sheet, a block per paper and room, each on its own page. A paper sat in two shifts has
   // one block per room with a signature column for each shift (the students keep the same seat).
@@ -203,6 +212,33 @@ export function buildWorkbookAll(ExcelJS, items, day) {
       [many ? `${p.name} Total` : 'Grand Total', null, ...phases.map((x) => grand[x]), p.rows.length].forEach((v, j) => { const c = ws.getCell(r, j + 1); c.value = v; style(c, { bold: true, size: 11, color: C.navy, bg: C.subFill, border: med }); });
       r += 3;
     }
+  }
+
+  // ---------- Feedback List: per building, each room, and the batches in it with their student count
+  {
+    const ws = wb.addWorksheet('Feedback List');
+    ws.columns = [{ width: 20 }, { width: 18.7 }];
+    let r = 1;
+    const put = (a, b, o) => { [a, b].forEach((v, jj) => { const c = ws.getCell(r, jj + 1); c.value = v; style(c, o); }); r++; };
+    put('Building Rooms', 'Student Count', { bold: true, size: 11, color: C.navy, bg: 'FFDDEBF7' });
+    let zebra = 0;
+    const leftIn = { horizontal: 'left', vertical: 'middle', indent: 1 };
+    for (const p of P) {
+      if (many) put(p.name, p.rows.length, { bold: true, size: 11, color: C.white, bg: C.navy, align: leftIn });
+      for (const b of [...new Set(p.rooms.map((x) => x.building))]) {
+        const inB = p.rows.filter((st) => st.Building === b);
+        put(b, inB.length, { bold: true, size: 11, color: C.navy, bg: 'FFE0F2FE', align: leftIn });
+        for (const room of p.rooms.filter((x) => x.building === b)) {
+          const occ = inRoom(p.rows, room);
+          if (!occ.length) continue;
+          put(roomVal(room.room), occ.length, { bold: true, bg: zebra++ % 2 ? C.grey : C.white, align: { horizontal: 'left', vertical: 'middle' } });
+          const byBatch = {};
+          occ.forEach((st) => { byBatch[st.Batch] = (byBatch[st.Batch] || 0) + 1; });
+          for (const bt of Object.keys(byBatch).sort(naturalCompare)) put(bt, byBatch[bt], { bg: zebra++ % 2 ? C.grey : C.white, align: { horizontal: 'left', vertical: 'middle' } });
+        }
+      }
+    }
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
   }
 
   // ---------- Room_Layout: seat grid per room (seats run down each column, like the room list)

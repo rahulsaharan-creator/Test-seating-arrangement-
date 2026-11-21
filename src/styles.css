@@ -855,3 +855,6 @@ input[type=text], input[type=number], input[type=date], input[type=time], select
 }
 /* No pictures or animations at the top of the steps (user, 21 Nov 2026) */
 .mts .scene, .mts .rhero-art { display: none !important; }
+.spec-group { border: 1px solid var(--line2); border-radius: 4px; padding: 10px 12px; margin-top: 10px; }
+.spec-group .chips { margin-top: 8px; }
+.spec-head { display: flex; align-items: center; gap: 8px; }

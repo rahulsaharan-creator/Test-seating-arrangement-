@@ -2,9 +2,9 @@
 //
 // How a seating is made (one paper, one call to allocate):
 //  1. Each student is Online (computer lab) or Offline (classroom): a student's own choice wins over the batch's.
-//     Online means "online first": labs fill first (top batches before others); when the labs are full,
+//     Online means "online first": labs fill first (special batches before others); when the labs are full,
 //     the remaining online students are seated offline, one by one, not the whole batch.
-//  2. Special students (Monitoring, Due fee, Top batch) go first into the rooms chosen for their group.
+//  2. Special students (Monitoring, Due fee, Special batch) go first into the rooms chosen for their group.
 //  3. Everyone else is shuffled together and fills the chosen buildings in the order Operations set,
 //     one room completely before the next.
 //  4. Girls only sit in buildings and labs marked "Girls allowed". Enough of those seats are kept for them.
@@ -45,7 +45,7 @@ export const roomKey = (r) => `${r.building}|${r.room}`;
 export const isGirl = (s) => /^(f|female|girl)$/i.test(String(s.Gender || '').trim());
 
 // Special groups, highest first. A student in two lists counts in the first one.
-export const FLAGS = ['Monitoring', 'Due fee', 'Top batch'];
+export const FLAGS = ['Monitoring', 'Due fee', 'Special batch'];
 
 /**
  * students: [{Roll_Number, Student_Name, Gender, Course, Batch, Medium}]
@@ -56,7 +56,7 @@ export const FLAGS = ['Monitoring', 'Due fee', 'Top batch'];
  *   girlsOk: {GP: true, PC: false, ...},              // classrooms: may girls sit in this building? (default yes)
  *   batchMode: {BATCH: 'Offline' | 'Online'},         // default Offline
  *   studentMode: {ROLL: 'Offline' | 'Online'},        // overrides the batch
- *   flags: {ROLL: 'Monitoring' | 'Due fee' | 'Top batch'},
+ *   flags: {ROLL: 'Monitoring' | 'Due fee' | 'Special batch'},
  *   pins: {'Monitoring': ['GP|1', ...], ...},          // rooms or labs kept for each special group
  *   cbOf: {BATCH: 'Group name'},                      // SMD sheet group; default first letter + "-Phase"
  *   taken: {'GP|1': 12},                              // seats already used by an overlapping paper
@@ -147,6 +147,19 @@ export function allocate(students, config) {
       continue;
     }
 
+    // 2. Special batch groups first (each group into its own labs / rooms), then the other special groups
+    for (const g of config.groupPins || []) {
+      const keys = new Set(g.keys || []);
+      const own = roomList.filter((r) => keys.has(roomKey(r)));
+      if (!own.length) continue;
+      const rolls = new Set(g.rolls || []);
+      const group = people.filter((s) => rolls.has(s.Roll_Number));
+      if (!group.length) continue;
+      const left = fill(arrange(group), own);
+      const placed = new Set(group.filter((s) => !left.includes(s)));
+      people = people.filter((s) => !placed.has(s));
+      if (left.length) warnings.push(`${g.name || 'Special batches'}: ${left.length} ${kind.toLowerCase()} students did not fit in the labs and rooms picked for them and were seated with everyone else.`);
+    }
     // 2. Special groups first, into the rooms kept for them
     for (const flag of FLAGS) {
       const keys = new Set((config.pins || {})[flag] || []);
@@ -163,13 +176,13 @@ export function allocate(students, config) {
 
     // 3. Everyone else, shuffled together, in building order. Inside a building, rooms kept for a group
     //    are used last, so their free seats are filled before anyone moves to the next building.
-    const pinned = new Set(Object.values(config.pins || {}).flat());
+    const pinned = new Set([...Object.values(config.pins || {}).flat(), ...(config.groupPins || []).flatMap((g) => g.keys || [])]);
     const ordered = roomList.map((r, i) => ({ r, i }))
       .sort((a, b) => rank(a.r.building) - rank(b.r.building) || pinned.has(roomKey(a.r)) - pinned.has(roomKey(b.r)) || a.i - b.i)
       .map(({ r }) => r);
-    // Online first: top batch students take lab seats before everyone else.
+    // Online first: special batch students take lab seats before everyone else.
     const queue = kind === 'Online'
-      ? [...arrange(people.filter((s) => s.Flag === 'Top batch')), ...arrange(people.filter((s) => s.Flag !== 'Top batch'))]
+      ? [...arrange(people.filter((s) => s.Flag === 'Special batch')), ...arrange(people.filter((s) => s.Flag !== 'Special batch'))]
       : arrange(people);
     const left = fill(queue, ordered);
     if (left.length && kind === 'Online') {

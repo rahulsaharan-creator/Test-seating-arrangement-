@@ -102,18 +102,18 @@ const basic = (res, n) => {
   ok(!res.assigned.some((s) => s.Building === 'PC' && isGirl(s)), 'no girl in PC');
 }
 
-// 7. Online first: labs fill first, top batch before others; the rest of the online students sit offline
+// 7. Online first: labs fill first, special batch before others; the rest of the online students sit offline
 {
   const st = [...mk(30, 'XA1', 0), ...mk(30, 'XB1', 0, 101), ...mk(20, 'XC1', 0, 201)];
   const labs = [{ ...room('GP', 'LAB', 40), girls: true }];
   const rooms = [room('GP', 1, 60)];
-  const flags = Object.fromEntries(mk(30, 'XB1', 0, 101).map((s) => [s.Roll_Number, 'Top batch']));
+  const flags = Object.fromEntries(mk(30, 'XB1', 0, 101).map((s) => [s.Roll_Number, 'Special batch']));
   const res = allocate(st, { rooms, labs, buildingOrder: ['GP'], batchMode: { XA1: 'Online', XB1: 'Online', XC1: 'Offline' }, flags, seed: 5 });
   console.log('\n7. Online first');
   basic(res, 80);
   const on = res.assigned.filter((s) => s.Mode === 'Online');
   ok(on.length === 40, 'labs filled (40 online)');
-  ok(on.filter((s) => s.Batch === 'XB1').length === 30, 'every top batch student online');
+  ok(on.filter((s) => s.Batch === 'XB1').length === 30, 'every special batch student online');
   ok(res.movedOffline === 20 && res.unseated.length === 0, '20 online students moved offline, none unseated');
   ok(res.assigned.filter((s) => s.Batch === 'XA1' && s.Mode === 'Online').length === 10, 'XA1 split: 10 online, the rest offline');
 }
@@ -172,15 +172,15 @@ console.log('\nExact seats: no room left half empty');
   ok(!r.unseated.length && r.usedRooms.every((x) => x.used === x.capacity), 'seats equal to students: every room full (name order)');
 }
 
-// 11. Top batch rooms (picked per test) and a lab used for offline students
+// 11. Special batch rooms (picked per test) and a lab used for offline students
 {
-  console.log('\n11. Top batch rooms first; lab used offline keeps its no-girls rule');
+  console.log('\n11. Special batch rooms first; lab used offline keeps its no-girls rule');
   const mk = (n, batch, from, girl = () => false) => Array.from({ length: n }, (_, i) => ({ Roll_Number: String(from + i), Student_Name: `S${from + i}`, Gender: girl(i) ? 'F' : 'M', Batch: batch }));
   const st = [...mk(10, 'TOP', 1), ...mk(30, 'B', 100)];
-  const flags = Object.fromEntries(st.filter((x) => x.Batch === 'TOP').map((x) => [x.Roll_Number, 'Top batch']));
+  const flags = Object.fromEntries(st.filter((x) => x.Batch === 'TOP').map((x) => [x.Roll_Number, 'Special batch']));
   const rooms = [{ building: 'A', room: '1', capacity: 20, enabled: true }, { building: 'B', room: '9', capacity: 20, enabled: true }];
-  const r = allocate(st, { rooms, labs: [], buildingOrder: ['A', 'B'], flags, pins: { 'Top batch': ['B|9'] }, seed: 3 });
-  ok(r.assigned.filter((x) => x.Batch === 'TOP').every((x) => x.Building === 'B'), 'top batch students sit in the building picked for them (B), not the first building in order');
+  const r = allocate(st, { rooms, labs: [], buildingOrder: ['A', 'B'], flags, pins: { 'Special batch': ['B|9'] }, seed: 3 });
+  ok(r.assigned.filter((x) => x.Batch === 'TOP').every((x) => x.Building === 'B'), 'special batch students sit in the building picked for them (B), not the first building in order');
   ok(r.assigned.filter((x) => x.Building === 'A').length === 20 && r.assigned.filter((x) => x.Building === 'B').length === 20, 'other students fill building A first, then the seats left in B');
   const g = [...mk(6, 'G', 500, () => true), ...mk(6, 'M', 600)];
   const lab = { building: 'A', room: 'LAB1', capacity: 6, enabled: true, girls: false };
