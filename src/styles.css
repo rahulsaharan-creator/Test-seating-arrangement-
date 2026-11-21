@@ -853,3 +853,5 @@ input[type=text], input[type=number], input[type=date], input[type=time], select
   .tile { flex: none; width: 112px; }
   .mts .shell { padding: 0 16px; }
 }
+/* No pictures or animations at the top of the steps (user, 21 Nov 2026) */
+.mts .scene, .mts .rhero-art { display: none !important; }
