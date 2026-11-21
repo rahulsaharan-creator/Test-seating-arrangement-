@@ -733,7 +733,7 @@ export default function App() {
           <PaperStep key={step} part={step === 'mode' ? 'mode' : 'setup'} scene={step === 'mode' ? <Scene kind="split" online={sceneTotals.online} offline={sceneTotals.offline} /> : <Scene kind="calendar" date={test.date} time={firstSlot && firstSlot.start} />} setupReady={setupReady} goMode={() => setStep('mode')} goTest={() => setStep('test')} test={test} setTest={setTest} setPaper={setPaper} setSlot={setSlot} courses={courses} phases={phases} ownerOf={ownerOf} slotOf={slotOf}
             batchMap={batchMap} phaseBatches={phaseBatches} studentsByBatch={studentsByBatch} studentMode={studentMode} setStudentMode={setStudentMode}
             sumSlot={sumSlot} paperOk={paperOk} start={startPaper} back={() => setStep(step === 'mode' ? 'test' : 'students')} labSeatsOf={labSeatsOf} labsOf={labsOf} adjustLabs={adjustLabs} setLabCap={setLabCap}
-            blds={settings.buildingOrder.filter((b) => roomsOn.some((r) => r.building === b))} girlsRule={settings.girlsLate || { on: true, after: '17:30' }} noCourse={noCourse} />
+            blds={settings.buildingOrder.filter((b) => roomsOn.some((r) => r.building === b))} girlsRule={settings.girlsLate || { on: true, after: '17:30' }} noCourse={noCourse} roomsOf={roomsOf} />
         )}
 
         {step === 'labs' && curP && (
@@ -871,7 +871,7 @@ function Nav({ back, next, nextOk = true, nextLabel = 'Continue', hint, children
   );
 }
 
-function PaperStep({ scene = null, part = 'setup', setupReady, goMode, goTest, test, setTest, setPaper, setSlot, courses, phases, ownerOf, slotOf, phaseBatches, studentsByBatch, studentMode, setStudentMode, sumSlot, paperOk, start, back, labSeatsOf, labsOf, adjustLabs, setLabCap, blds, girlsRule, noCourse }) {
+function PaperStep({ scene = null, part = 'setup', setupReady, goMode, goTest, test, setTest, setPaper, setSlot, courses, phases, ownerOf, slotOf, phaseBatches, studentsByBatch, studentMode, setStudentMode, sumSlot, paperOk, start, back, labSeatsOf, labsOf, adjustLabs, setLabCap, blds, girlsRule, noCourse, roomsOf }) {
   const topOf = (p) => new Set(p.top || []);
   const setTopOf = (p) => (fn) => setPaper(p.id, { top: [...fn(new Set(p.top || []))] });
   const addPaper = () => setTest({ ...test, papers: [...test.papers, newPaper()] });
@@ -882,14 +882,14 @@ function PaperStep({ scene = null, part = 'setup', setupReady, goMode, goTest, t
     setTest((t) => ({ ...t, kind: k, papers: [newPaper()] }));
   };
   const cardOf = (p, i) => (kind === 'RPT' ? (
-    <RptCard key={p.id} part={part} p={p} i={i} n={test.papers.length} setPaper={setPaper} remove={() => removePaper(p.id)} courses={courses} phases={phases} sumSlot={sumSlot} ok={paperOk(p)} start={() => start(p)} top={topOf(p)} setTop={setTopOf(p)} blds={blds} noCourse={noCourse}
+    <RptCard key={p.id} part={part} p={p} i={i} n={test.papers.length} setPaper={setPaper} remove={() => removePaper(p.id)} courses={courses} phases={phases} sumSlot={sumSlot} ok={paperOk(p)} start={() => start(p)} top={topOf(p)} setTop={setTopOf(p)} blds={blds} noCourse={noCourse} rooms={roomsOf(p)} nOf={(b) => (studentsByBatch[b] || []).length}
       labSeats={labSeatsOf(p)} labsOn={labsOf(p)} adjustLabs={(how, v) => adjustLabs(p, how, v)} setLabCap={(k, v) => setLabCap(p, k, v)}
       swapCtx={{ rule: girlsRule, studentsOf: (b) => (studentsByBatch[b] || []).map((x) => ({ roll: x.Roll_Number, girl: isGirl(x) })) }} />
   ) : (
     <PaperCard key={p.id} part={part} p={p} i={i} n={test.papers.length} setPaper={setPaper} setSlot={setSlot} remove={() => removePaper(p.id)}
       courses={courses} phases={phases} ownerOf={ownerOf} slotOf={slotOf} phaseBatches={phaseBatches}
       studentsByBatch={studentsByBatch} studentMode={studentMode} setStudentMode={setStudentMode}
-      top={topOf(p)} setTop={setTopOf(p)} sumSlot={sumSlot} ok={paperOk(p)} start={() => start(p)} labs={labsOf(p)} blds={blds} noCourse={noCourse} />
+      top={topOf(p)} setTop={setTopOf(p)} sumSlot={sumSlot} ok={paperOk(p)} start={() => start(p)} labs={labsOf(p)} blds={blds} noCourse={noCourse} rooms={roomsOf(p)} nOf={(b) => (studentsByBatch[b] || []).length} />
   ));
   if (part === 'mode') {
     const ready = test.papers.map((p, i) => [p, i]).filter(([p]) => setupReady(p));
@@ -1048,7 +1048,7 @@ export function rptSlots(p, r, phases, cap, labsOn = [], ctx = null) {
 // pins and outs are kept by time number: removing time k drops its entry and moves the later ones up
 const dropTime = (m, k) => Object.fromEntries(Object.entries(m || {}).filter(([i]) => Number(i) !== k).map(([i, v]) => [Number(i) > k ? Number(i) - 1 : Number(i), v]));
 
-function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, sumSlot, ok, start, top, setTop, labSeats, labsOn, adjustLabs, setLabCap, blds, swapCtx = null, noCourse }) {
+function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, sumSlot, ok, start, top, setTop, labSeats, labsOn, adjustLabs, setLabCap, blds, swapCtx = null, noCourse, rooms = [], nOf = () => 0 }) {
   const r = p.rpt || rptDefault();
   const apply = (patch, extra = {}) => { const nr = { ...r, ...patch }; const np = { ...p, ...extra, rpt: nr }; setPaper(p.id, { ...extra, rpt: nr, slots: rptSlots(np, nr, phases, labSeats, labsOn, swapCtx) }); };
   // Lab seats changed (or a new admission list): spread the batches again
@@ -1194,7 +1194,7 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
           <button type="button" className="addslot sm" onClick={addTime}>{Ico.plus}Add another time</button>
         </div>
       )}
-      {part === 'mode' && top.size > 0 && !sepOn && <SpecialSeats p={p} setPaper={setPaper} labs={labsOn} blds={blds} />}
+      {part === 'mode' && top.size > 0 && !sepOn && <SpecialSeats p={p} setPaper={setPaper} labs={labsOn} blds={blds} rooms={rooms} nOf={nOf} />}
       {part === 'mode' && ok && plan.left === 0 && !sepReady && <p className="small bad">Finish the special batches questions at the top (or answer No) before creating the seating.</p>}
       {part === 'mode' && ok && plan.left === 0 && sepReady && (
         <div className="paper-cta">
@@ -1336,7 +1336,7 @@ function LabSeats({ labSeats, labsOn, adjustLabs, setLabCap }) {
   );
 }
 
-function PaperCard({ part = 'setup', p, i, n, setPaper, setSlot, remove, courses, phases, ownerOf, slotOf, phaseBatches, studentsByBatch, studentMode, setStudentMode, top, setTop, sumSlot, ok, start, labs, blds, noCourse }) {
+function PaperCard({ part = 'setup', p, i, n, setPaper, setSlot, remove, courses, phases, ownerOf, slotOf, phaseBatches, studentsByBatch, studentMode, setStudentMode, top, setTop, sumSlot, ok, start, labs, blds, noCourse, rooms = [], nOf = () => 0 }) {
   const toggleCourse = (c) => {
     const cs = toggleIn(p.courses, c);
     setPaper(p.id, { courses: cs, slots: p.slots.map((s) => ({ ...s, ...keepBatches(s, phases, s.phases.filter((k) => cs.includes(k.split('|')[0]))) })) });
@@ -1378,7 +1378,7 @@ function PaperCard({ part = 'setup', p, i, n, setPaper, setSlot, remove, courses
         </div>
       )}
 
-      {part === 'mode' && top.size > 0 && p.courses.length > 0 && <SpecialSeats p={p} setPaper={setPaper} labs={labs} blds={blds} />}
+      {part === 'mode' && top.size > 0 && p.courses.length > 0 && <SpecialSeats p={p} setPaper={setPaper} labs={labs} blds={blds} rooms={rooms} nOf={nOf} />}
       {part === 'mode' && ok && (
         <div className="paper-cta">
           {p.done && <span className="pill">Seating ready ✓</span>}
@@ -1433,32 +1433,61 @@ function ModeBox({ p, s, k, setSlot, studentsByBatch, studentMode, setStudentMod
 
 // Special batches of a test: the labs (online students) and buildings (offline students) where they sit first.
 // Other students get the seats left there. Belongs to this test only and is never saved.
-function SpecialSeats({ p, setPaper, labs, blds }) {
+// Special batches, one at a time: pick a marked batch, pick its labs (online) or buildings and labs (offline),
+// see how many of its students have a seat and how many seats are left, then the next batch. Seats a batch leaves
+// empty stay on offer (with the number free) for the next batch. Saved as p.special = [{ batches: [b], labs, blds }].
+function SpecialSeats({ p, setPaper, labs, blds, rooms = [], nOf = () => 0 }) {
   const marked = p.top || [];
-  const list = (p.special && p.special.length ? p.special : [{ batches: [], labs: [], blds: [] }]).map((g) => ({ ...g, batches: g.batches.filter((b) => marked.includes(b)) }));
+  const list = (p.special || []).map((g) => ({ ...g, batches: g.batches.filter((b) => marked.includes(b)) })).filter((g) => g.batches.length);
   const save = (l) => setPaper(p.id, { special: l });
   const set = (i, v) => save(list.map((g, j) => (j === i ? { ...g, ...v } : g)));
   const tog = (arr, k) => (arr.includes(k) ? arr.filter((x) => x !== k) : [...arr, k]);
-  const owner = {};
-  list.forEach((g, i) => g.batches.forEach((b) => { owner[b] = i; }));
-  const left = marked.filter((b) => owner[b] === undefined);
+  const placed = new Set(list.flatMap((g) => g.batches));
+  const left = marked.filter((b) => !placed.has(b));
+  // seats: every lab, and every building (all its rooms); filled batch by batch in the order they were added
+  const cap = {};
+  labs.forEach((l) => { cap[roomKey(l)] = Number(l.capacity) || 0; });
+  blds.forEach((b) => { cap[`B:${b}`] = rooms.filter((r) => r.building === b).reduce((a, r) => a + (Number(r.capacity) || 0), 0); });
+  const free = { ...cap };
+  const rows = list.map((g) => {
+    const before = { ...free };
+    const n = g.batches.reduce((a, b) => a + nOf(b), 0);
+    let need = n;
+    for (const k of [...(g.labs || []), ...(g.blds || []).map((b) => `B:${b}`)]) { const t = Math.min(free[k] || 0, need); free[k] = (free[k] || 0) - t; need -= t; }
+    const empty = [...(g.labs || []), ...(g.blds || []).map((b) => `B:${b}`)].reduce((a, k) => a + (free[k] || 0), 0);
+    return { g, before, n, seated: n - need, need, empty };
+  });
+  const placeChip = (i, g, k, label, on, field, val, before) => {
+    const f = before[k] ?? 0;
+    const full = !on && f <= 0;
+    return <button key={k} type="button" disabled={full} title={full ? 'No free seats left here' : ''} className={`chip-btn ${on ? 'on' : ''}`} onClick={() => set(i, { [field]: tog(g[field] || [], val) })}>{label} <small>{f < cap[k] ? `${f} of ${cap[k]} free` : `${cap[k]} seats`}</small></button>;
+  };
   return (
     <div className="q topseats">
       <b className="q-l">★ Where do the special batches sit?</b>
-      <p className="muted small">Pick special batches from the ones you marked, then where they sit. Online batches: labs only. Offline batches: buildings or labs.{left.length ? ` Not in a group yet: ${left.join(', ')} (they get lab seats first, with everyone else).` : ''}</p>
-      {list.map((g, i) => {
-        const mode = g.batches.length ? groupMode(p, g) : '';
+      <p className="muted small">One batch at a time: pick a batch, then its labs (online) or buildings and labs (offline). Seats a batch leaves empty can be picked again for the next batch.</p>
+      {rows.map(({ g, before, n, seated, need, empty }, i) => {
+        const mode = groupMode(p, g);
         const gl = g.labs || [], gb = g.blds || [];
+        const picked = gl.length + gb.length > 0;
         return (
-          <div className="spec-group" key={i}>
-            <div className="spec-head"><b>Group {i + 1}</b>{mode && <span className="pill">{mode === 'Both' ? 'Online + offline' : mode}</span>}<span className="grow" />{list.length > 1 && <button type="button" className="iconbtn danger" onClick={() => save(list.filter((_, j) => j !== i))} aria-label={`Remove group ${i + 1}`}>{Ico.bin}</button>}</div>
-            <div className="chips"><span className="small muted">Batches</span>{marked.map((b) => { const other = owner[b] !== undefined && owner[b] !== i; return <button key={b} type="button" disabled={other} title={other ? `In group ${owner[b] + 1}` : ''} className={`chip-btn ${g.batches.includes(b) ? 'on' : ''}`} onClick={() => set(i, { batches: tog(g.batches, b) })}>★ {b}</button>; })}</div>
-            {mode && labs.length > 0 && <div className="chips"><span className="small muted">Labs</span>{labs.map((l) => { const k = roomKey(l); return <button key={k} type="button" className={`chip-btn ${gl.includes(k) ? 'on' : ''}`} onClick={() => set(i, { labs: tog(gl, k) })}>{l.building} · {l.room} <small>{l.capacity}</small></button>; })}</div>}
-            {mode && mode !== 'Online' && <div className="chips"><span className="small muted">Buildings</span>{blds.map((b) => <button key={b} type="button" className={`chip-btn ${gb.includes(b) ? 'on' : ''}`} onClick={() => set(i, { blds: tog(gb, b) })}>{b}</button>)}</div>}
+          <div className="spec-group" key={g.batches.join(',')}>
+            <div className="spec-head"><b>★ {g.batches.join(', ')}</b><span className="pill">{mode === 'Both' ? 'Online + offline' : mode}</span><span className="muted small">{pl(n, 'student')}</span><span className="grow" />
+              <button type="button" className="iconbtn danger" onClick={() => save(list.filter((_, j) => j !== i))} aria-label={`Remove ${g.batches.join(', ')}`} title="Take this batch out">{Ico.bin}</button></div>
+            {labs.length > 0 && <div className="chips"><span className="small muted">Labs</span>{labs.map((l) => { const k = roomKey(l); return placeChip(i, g, k, `${l.building} · ${l.room}`, gl.includes(k), 'labs', k, before); })}</div>}
+            {mode !== 'Online' && <div className="chips"><span className="small muted">Buildings</span>{blds.map((b) => placeChip(i, g, `B:${b}`, b, gb.includes(b), 'blds', b, before))}</div>}
+            {picked
+              ? <p className={`small spec-status ${need ? 'bad' : 'good'}`}>{need ? `${pl(seated, 'student')} seated, ${pl(need, 'student')} still need a seat: pick another lab${mode !== 'Online' ? ' or building' : ''}.` : `All ${pl(n, 'student')} seated · ${pl(empty, 'empty seat')} left${empty ? ' (the next batch can use them)' : ''}.`}</p>
+              : <p className="small muted spec-status">Pick where {g.batches.join(', ')} sits.</p>}
           </div>
         );
       })}
-      {left.length > 0 && <button type="button" className="addslot" onClick={() => save([...list, { batches: [], labs: [], blds: [] }])}>{Ico.plus}Add another group</button>}
+      {left.length > 0 && (!rows.length || rows[rows.length - 1].g.labs?.length || rows[rows.length - 1].g.blds?.length) && (
+        <div className="chips spec-next"><span className="small muted">{rows.length ? 'Next special batch' : 'Pick a special batch'}</span>
+          {left.map((b) => <button key={b} type="button" className="chip-btn" onClick={() => save([...list, { batches: [b], labs: [], blds: [] }])}>★ {b} <small>{nOf(b)}</small></button>)}
+        </div>
+      )}
+      {left.length === 0 && rows.length > 0 && <p className="small good">Every special batch has its place.</p>}
     </div>
   );
 }

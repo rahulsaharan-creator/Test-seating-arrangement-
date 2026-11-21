@@ -858,3 +858,9 @@ input[type=text], input[type=number], input[type=date], input[type=time], select
 .spec-group { border: 1px solid var(--line2); border-radius: 4px; padding: 10px 12px; margin-top: 10px; }
 .spec-group .chips { margin-top: 8px; }
 .spec-head { display: flex; align-items: center; gap: 8px; }
+/* Online / Offline (and every other choice button): the selected one is solid green */
+.seg[data-thumb]::before { display: none !important; }
+.seg button.on { background: var(--accent) !important; color: #fff !important; }
+.spec-status { margin: 8px 0 0; font-weight: 600; }
+.spec-next { margin-top: 10px; }
+.chip-btn:disabled { opacity: .4; cursor: not-allowed; }

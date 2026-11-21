@@ -16,7 +16,7 @@ const meta2 = { ...meta1, title: 'Demo - Paper 2', slots: [{ label: '', start: '
 const wb = buildWorkbook(ExcelJS, p1, meta1);
 const names = wb.worksheets.map((w) => w.name);
 // Two shifts: one attendance block per room (not one per shift), with a signature column for each shift
-let blocks = 0, sigCols = 0; wb.getWorksheet('Attendance').eachRow((r) => { const v = String(r.getCell(1).value || ''); if (v.includes('Room') && v.includes('Shift 1') && v.includes('Shift 2')) blocks++; if (r.getCell(1).value === 'Reg. No.') sigCols = Math.max(sigCols, r.values.filter((x) => String(x).startsWith('Signature')).length); });
+let blocks = 0, sigCols = 0; wb.worksheets.find((w) => w.name.startsWith('Attendance')).eachRow((r) => { const v = String(r.getCell(1).value || ''); if (v.includes('Room') && v.includes('7:00 AM') && v.includes('10:30 AM')) blocks++; if (r.getCell(1).value === 'Reg. No.') sigCols = Math.max(sigCols, r.values.filter((x) => String(x).startsWith('Signature')).length); });
 ok(blocks === p1.usedRooms.length && sigCols === 2, `two shifts: one attendance block per room (${blocks} for ${p1.usedRooms.length} rooms) with 2 signature columns (${names.join(', ')})`);
 const sl = wb.getWorksheet('Student_list'); const head = sl.getRow(1).values;
 ok(head.includes('Flag'), 'Student_list has a Flag column');
