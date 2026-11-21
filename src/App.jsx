@@ -147,6 +147,7 @@ function ConfirmHost() {
   );
 }
 
+const TILE_IC = { students: '⇪', test: '☑', mode: '⇄', labs: '▣', rooms: '▦', result: '✓' };
 const STEPS = [
   { id: 'students', label: 'Admission list' },
   { id: 'test', label: 'Test & papers' },
@@ -158,6 +159,8 @@ const STEPS = [
 
 export default function App() {
   const [step, setStep] = useState('students');
+  // SMD sheet: paper codes and the batches in each, asked on the result page before download
+  const [smdCodes, setSmdCodes] = useState([]);
   const [settings, setSettings] = useState(loadSettings);
   const [adm, setAdm] = useState(null);
   const [busy, setBusy] = useState('');
@@ -207,6 +210,8 @@ export default function App() {
   // s.rolls[batch]: the exact students after the RPT girls rule moved some of them (wins over s.parts)
   const stuOf = (s, b) => { const all = studentsByBatch[b] || [], pt = s.parts && s.parts[b]; if (s.rolls && s.rolls[b]) { const set = new Set(s.rolls[b]); return all.filter((x) => set.has(x.Roll_Number)); } return pt ? all.slice(pt[0], pt[1]) : all; };
   const courses = useMemo(() => [...new Set(batches.map((b) => b.course).filter((c) => String(c || '').trim()))].sort(naturalCompare), [batches]);
+  // No Course column (or all empty): skip the course question, every batch sits under 'Other' and setup starts with phases
+  const noCourse = batches.length > 0 && courses.length === 0;
   const phaseList = useMemo(() => parsePhaseList(settings.phaseText || ''), [settings.phaseText]);
   const phases = useMemo(() => groupPhases(batches, phaseList.phases), [batches, phaseList]);
 
@@ -473,7 +478,7 @@ export default function App() {
       if (!batchMap[b]) continue;
       pairs.push([s, b]); batchMode[b] = modeIn(p, s, b);
     }
-    const shiftLabel = (x) => `${fmtTime(x.start)}${x.end ? ` to ${fmtTime(x.end)}` : ''}`;
+    const shiftLabel = (x) => fmtTime(x.start); // sheets show the start time only (9:00 AM, not 9:00 AM to 12:00 PM)
     const st = pairs.flatMap(([s, b]) => stuOf(s, b).map((x) => ({ ...x, Paper: slotName(p, s), _shifts: (s.two ? [s, s.s2] : [s]).map(shiftLabel) })));
     const labKeys = new Set(used.flatMap((s) => slotLabs(s, p).map(roomKey)));
     const roomKeys = new Set(used.flatMap((s) => slotRooms(s, p).map(roomKey)));
@@ -507,7 +512,6 @@ export default function App() {
   }
   function run(newSeed, list) {
     const cbOf = {};
-    for (const g of settings.cbGroups) for (const b of parseRolls(g.batches)) if (g.name.trim()) cbOf[b] = g.name.trim();
     const units = list.filter((p) => p.done && p.slots.some((s) => s.batches.length))
       .flatMap((p) => timeGroupsOf(p).map((used, gi, all) => ({ p, used, top: used.some((s) => s.top), blocked: used.some((s) => s.top) ? blockedOf(p, used[0]) : null, unit: { id: `${p.id}-${gi}`, name: `${(p.name || '').trim() || `Test ${list.indexOf(p) + 1}`}${all.length > 1 ? ` · ${used.map((s) => slotName(p, s)).join(' + ')}` : ''}`, mode: '', two: false, shifts: shiftsOfTest(p, used) } })))
       .sort((a, b) => b.top - a.top || mins(windowOf(a.unit).start) - mins(windowOf(b.unit).start));
@@ -568,7 +572,12 @@ export default function App() {
     setBusy('Building the Excel file…');
     try {
       const ExcelJS = await loadExcel();
-      const wb = buildWorkbookAll(ExcelJS, todo.map((x) => ({ result: x.result, meta: metaFor(x) })), { dateISO: test.date, dayTitle: dayTitle() });
+      // SMD sheet columns = the paper codes the operator gave (batches without a code go under "No paper code")
+      const codeOf = {};
+      for (const c of smdCodes) if (c.name.trim()) for (const b of c.batches) codeOf[b] = c.name.trim();
+      const coded = Object.keys(codeOf).length > 0;
+      const withCode = (r) => (coded ? { ...r, assigned: r.assigned.map((st) => ({ ...st, CB: codeOf[st.Batch] || 'No paper code' })) } : r);
+      const wb = buildWorkbookAll(ExcelJS, todo.map((x) => ({ result: withCode(x.result), meta: metaFor(x) })), { dateISO: test.date, dayTitle: dayTitle() });
       saveBlob(new Blob([await wb.xlsx.writeBuffer()], { type: XLSX }), `${dayTitle().replace(/[^\w]+/g, '_')}_${fmtDateDMY(test.date)}.xlsx`);
     } catch (e) { setError(`Could not build the file: ${e.message}`); }
     setBusy('');
@@ -595,6 +604,9 @@ export default function App() {
     setBusy('');
   }
 
+  useEffect(() => {
+    if (noCourse && test.papers.some((p) => !p.courses.length)) setTest((t) => ({ ...t, papers: t.papers.map((p) => (p.courses.length ? p : { ...p, courses: ['Other'] })) }));
+  }, [noCourse, test.papers]);
   const setupOk = !!adm && !!test.date && !!curP && paperOk(curP);
   const canOpen = (id) => (id === 'students' ? true : id === 'test' ? !!adm : id === 'mode' ? !!adm && !!test.date && papers.some(setupReady) : id === 'result' ? !!results : setupOk);
   const doneMark = (id) => (id === 'students' ? !!adm : id === 'test' ? !!test.date && papers.some(setupReady) : id === 'mode' ? papers.some((p) => p.done) : false);
@@ -613,29 +625,55 @@ export default function App() {
   const dir = at < lastAt.current ? 'back' : 'fwd';
   useEffect(() => { lastAt.current = at; }, [at]);
   return (
-    <div className="app">
-      <header className="top">
+    <div className={`app ${landing ? '' : 'mts'}`}>
+      {landing && <header className="top">
         <div className="top-in">
           <div className="logo">
             <img src="/brand/matrix-logo-green.png" alt="Matrix Academy" className="logo-img" />
             <span className="sep" aria-hidden="true" />
-            <div className="brand"><b>Test Seating</b>{!landing && <span className="chip">{test.date ? `${fmtDateDMY(test.date)} · ${pl(papers.reduce((a, p) => a + p.slots.length, 0), 'paper')}` : 'No test date yet'}</span>}</div>
+            <div className="brand"><b>Test Seating</b></div>
           </div>
-          {!landing && <nav className="stepper" aria-label="Steps">
+        </div>
+      </header>}
+      {!landing && (
+        <aside className="mside" aria-label="Steps">
+          <div className="mlogo"><img src="/brand/matrix-logo-white.png" alt="Matrix Academy" /></div>
+          <div className="mctx"><b>Test Seating</b><span>{test.date ? `${fmtDateDMY(test.date)} · ${pl(papers.reduce((a, p) => a + p.slots.length, 0), 'paper')}` : 'No test date yet'}</span></div>
+          <nav className="mmenu">
+            <div className="mgrp">Create seating plan</div>
             {shown.map((s, i) => {
               const done = doneMark(s.id) && step !== s.id;
               return (
                 <button key={s.id} type="button" disabled={!canOpen(s.id)} aria-current={step === s.id ? 'step' : undefined}
-                  className={`st ${step === s.id ? 'on' : ''} ${done ? 'done' : ''}`} onClick={() => setStep(s.id)}>
+                  className={`mi ${step === s.id ? 'on' : ''} ${done ? 'done' : ''}`} onClick={() => setStep(s.id)}>
                   <i>{done ? '✓' : i + 1}</i><span>{s.label}</span>
                 </button>
               );
             })}
-          </nav>}
+          </nav>
+          <div className="mfoot">Jump to any step that is open. Your choices stay as they are.</div>
+        </aside>
+      )}
+      <div className="mbody">
+      {!landing && (
+        <div className="mhead">
+          <h1 className="mtitle">{(STEPS.find((s) => s.id === step) || STEPS[0]).label}</h1>
+          <div className="card tilecard">
+            <div className="ctx">Test date : <b>{test.date ? fmtDateDMY(test.date) : 'not set'}</b>{test.title ? <> · <b>{test.title}</b></> : null} · <span className="pill">{pl(papers.reduce((a, p) => a + p.slots.length, 0), 'paper')}</span>{adm ? <> · <span className="pill">{pl(adm.students.length, 'student')}</span></> : null}</div>
+            <nav className="tiles" aria-label="Steps">
+              {shown.map((s, i) => {
+                const done = doneMark(s.id) && step !== s.id;
+                return (
+                  <button key={s.id} type="button" disabled={!canOpen(s.id)} aria-current={step === s.id ? 'step' : undefined}
+                    className={`tile ${step === s.id ? 'on' : ''} ${done ? 'done' : ''}`} onClick={() => setStep(s.id)}>
+                    {done && <span className="ck">✓</span>}<span className="ti">{TILE_IC[s.id]}</span>{i + 1}. {s.label}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
         </div>
-        {!landing && <div className="progress" role="progressbar" aria-label="Progress" aria-valuemin={1} aria-valuemax={shown.length} aria-valuenow={at + 1}><span style={{ width: `${((at + 1) / shown.length) * 100}%` }} /></div>}
-      </header>
-
+      )}
       {landing && <Landing go={() => { setStarted(true); setStep('students'); }} />}
       {!landing && <div className={`shell ${showSide ? 'with-side' : ''}`}>
       <main className={`main dir-${dir}`}>
@@ -677,7 +715,7 @@ export default function App() {
                 onChange={(e) => setSettings((s) => ({ ...s, phaseText: e.target.value }))} aria-label="Phase list" />
               {phaseList.issues.map((x) => <p key={x} className="muted small bad">{x}</p>)}
             </details>
-            {adm && <Nav next={() => { setTest(initialTest()); setResults(null); setCur(''); setStep('test'); }} />}
+            {adm && <Nav next={() => { setTest(initialTest()); setResults(null); setCur(''); setSmdCodes([]); setStep('test'); }} />}
           </section>
         )}
 
@@ -685,7 +723,7 @@ export default function App() {
           <PaperStep key={step} part={step === 'mode' ? 'mode' : 'setup'} scene={step === 'mode' ? <Scene kind="split" online={sceneTotals.online} offline={sceneTotals.offline} /> : <Scene kind="calendar" date={test.date} time={firstSlot && firstSlot.start} />} setupReady={setupReady} goMode={() => setStep('mode')} goTest={() => setStep('test')} test={test} setTest={setTest} setPaper={setPaper} setSlot={setSlot} courses={courses} phases={phases} ownerOf={ownerOf} slotOf={slotOf}
             batchMap={batchMap} phaseBatches={phaseBatches} studentsByBatch={studentsByBatch} studentMode={studentMode} setStudentMode={setStudentMode}
             sumSlot={sumSlot} paperOk={paperOk} start={startPaper} back={() => setStep(step === 'mode' ? 'test' : 'students')} labSeatsOf={labSeatsOf} labsOf={labsOf} adjustLabs={adjustLabs} setLabCap={setLabCap}
-            blds={settings.buildingOrder.filter((b) => roomsOn.some((r) => r.building === b))} girlsRule={settings.girlsLate || { on: true, after: '17:30' }} />
+            blds={settings.buildingOrder.filter((b) => roomsOn.some((r) => r.building === b))} girlsRule={settings.girlsLate || { on: true, after: '17:30' }} noCourse={noCourse} />
         )}
 
         {step === 'labs' && curP && (
@@ -702,7 +740,7 @@ export default function App() {
         {step === 'result' && results && (
           <ResultStep results={results} metaFor={metaFor} order={settings.buildingOrder} dateISO={test.date}
             reshuffle={async () => { if (await askConfirm('Reshuffle every seat? The current seating is replaced.', 'Reshuffle')) run(Math.floor(Math.random() * 1e9), test.papers); }}
-            download={download} downloadBoard={downloadBoard} boardData={boardData} back={() => setStep('rooms')} />
+            download={download} downloadBoard={downloadBoard} boardData={boardData} back={() => setStep('rooms')} smdCodes={smdCodes} setSmdCodes={setSmdCodes} />
         )}
         {step === 'result' && results && papers.some((p) => !p.done) && (
           <div className="alert info"><span>{papers.map((p, i) => (p.done ? '' : `Test ${i + 1}`)).filter(Boolean).join(', ')}: seating not made yet.</span><button className="btn sm" onClick={() => setStep('test')}>Set up next paper</button></div>
@@ -720,6 +758,7 @@ export default function App() {
         </aside>
       )}
       </div>}
+      </div>
       <ConfirmHost />
     </div>
   );
@@ -822,7 +861,7 @@ function Nav({ back, next, nextOk = true, nextLabel = 'Continue', hint, children
   );
 }
 
-function PaperStep({ scene = null, part = 'setup', setupReady, goMode, goTest, test, setTest, setPaper, setSlot, courses, phases, ownerOf, slotOf, phaseBatches, studentsByBatch, studentMode, setStudentMode, sumSlot, paperOk, start, back, labSeatsOf, labsOf, adjustLabs, setLabCap, blds, girlsRule }) {
+function PaperStep({ scene = null, part = 'setup', setupReady, goMode, goTest, test, setTest, setPaper, setSlot, courses, phases, ownerOf, slotOf, phaseBatches, studentsByBatch, studentMode, setStudentMode, sumSlot, paperOk, start, back, labSeatsOf, labsOf, adjustLabs, setLabCap, blds, girlsRule, noCourse }) {
   const topOf = (p) => new Set(p.top || []);
   const setTopOf = (p) => (fn) => setPaper(p.id, { top: [...fn(new Set(p.top || []))] });
   const addPaper = () => setTest({ ...test, papers: [...test.papers, newPaper()] });
@@ -833,14 +872,14 @@ function PaperStep({ scene = null, part = 'setup', setupReady, goMode, goTest, t
     setTest((t) => ({ ...t, kind: k, papers: [newPaper()] }));
   };
   const cardOf = (p, i) => (kind === 'RPT' ? (
-    <RptCard key={p.id} part={part} p={p} i={i} n={test.papers.length} setPaper={setPaper} remove={() => removePaper(p.id)} courses={courses} phases={phases} sumSlot={sumSlot} ok={paperOk(p)} start={() => start(p)} top={topOf(p)} setTop={setTopOf(p)} blds={blds}
+    <RptCard key={p.id} part={part} p={p} i={i} n={test.papers.length} setPaper={setPaper} remove={() => removePaper(p.id)} courses={courses} phases={phases} sumSlot={sumSlot} ok={paperOk(p)} start={() => start(p)} top={topOf(p)} setTop={setTopOf(p)} blds={blds} noCourse={noCourse}
       labSeats={labSeatsOf(p)} labsOn={labsOf(p)} adjustLabs={(how, v) => adjustLabs(p, how, v)} setLabCap={(k, v) => setLabCap(p, k, v)}
       swapCtx={{ rule: girlsRule, studentsOf: (b) => (studentsByBatch[b] || []).map((x) => ({ roll: x.Roll_Number, girl: isGirl(x) })) }} />
   ) : (
     <PaperCard key={p.id} part={part} p={p} i={i} n={test.papers.length} setPaper={setPaper} setSlot={setSlot} remove={() => removePaper(p.id)}
       courses={courses} phases={phases} ownerOf={ownerOf} slotOf={slotOf} phaseBatches={phaseBatches}
       studentsByBatch={studentsByBatch} studentMode={studentMode} setStudentMode={setStudentMode}
-      top={topOf(p)} setTop={setTopOf(p)} sumSlot={sumSlot} ok={paperOk(p)} start={() => start(p)} labs={labsOf(p)} blds={blds} />
+      top={topOf(p)} setTop={setTopOf(p)} sumSlot={sumSlot} ok={paperOk(p)} start={() => start(p)} labs={labsOf(p)} blds={blds} noCourse={noCourse} />
   ));
   if (part === 'mode') {
     const ready = test.papers.map((p, i) => [p, i]).filter(([p]) => setupReady(p));
@@ -999,7 +1038,7 @@ export function rptSlots(p, r, phases, cap, labsOn = [], ctx = null) {
 // pins and outs are kept by time number: removing time k drops its entry and moves the later ones up
 const dropTime = (m, k) => Object.fromEntries(Object.entries(m || {}).filter(([i]) => Number(i) !== k).map(([i, v]) => [Number(i) > k ? Number(i) - 1 : Number(i), v]));
 
-function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, sumSlot, ok, start, top, setTop, labSeats, labsOn, adjustLabs, setLabCap, blds, swapCtx = null }) {
+function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, sumSlot, ok, start, top, setTop, labSeats, labsOn, adjustLabs, setLabCap, blds, swapCtx = null, noCourse }) {
   const r = p.rpt || rptDefault();
   const apply = (patch, extra = {}) => { const nr = { ...r, ...patch }; const np = { ...p, ...extra, rpt: nr }; setPaper(p.id, { ...extra, rpt: nr, slots: rptSlots(np, nr, phases, labSeats, labsOn, swapCtx) }); };
   // Lab seats changed (or a new admission list): spread the batches again
@@ -1052,16 +1091,16 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
     <div className="card paper">
       <div className="paper-top">
         <span className="slot-n">{i + 1}</span>
-        <b className="grow">{n > 1 ? `RPT test ${i + 1}` : 'RPT test'}{p.courses.length ? ` · ${p.courses.join(', ')}` : ''}</b>
+        <b className="grow">{n > 1 ? `RPT test ${i + 1}` : 'RPT test'}{p.courses.length && !noCourse ? ` · ${p.courses.join(', ')}` : ''}</b>
         {part === 'mode' ? <span className="muted small">{pl(sel.length, 'phase')}</span> : <button type="button" className="iconbtn danger" disabled={n === 1} onClick={remove} aria-label={`Remove test ${i + 1}`} title="Remove this test">{Ico.bin}</button>}
       </div>
-      {part === 'setup' && <div className="q">
+      {part === 'setup' && !noCourse && <div className="q">
         <b className="q-l">1. Course</b>
         <div className="chips">{courses.map((c) => <button key={c} type="button" className={`chip-btn ${p.courses.includes(c) ? 'on' : ''}`} onClick={() => toggleCourse(c)}>{c}</button>)}</div>
       </div>}
       {part === 'setup' && p.courses.length > 0 && (
         <div className="q">
-          <b className="q-l">2. Phases in this test</b>
+          <b className="q-l">{noCourse ? 1 : 2}. Phases in this test</b>
           <p className="muted small">{r.phases.length} of {mine.length} phases · <button className="link" onClick={() => apply({ phases: mine.map((g) => g.key) })}>Select all</button> · <button className="link" onClick={() => apply({ phases: [] })}>Clear</button></p>
           <div className="chips">
             {mine.map((g) => (
@@ -1075,7 +1114,7 @@ function RptCard({ part = 'setup', p, i, n, setPaper, remove, courses, phases, s
       {part === 'mode' && r.phases.length > 0 && <TopSep p={p} r={r} setPaper={setPaper} sel={sel} info={info} labs={labsOn} blds={blds} sep={sep} cutoff={late.size ? cutoff : ''} />}
       {part === 'mode' && r.phases.length > 0 && (
         <div className="q">
-          <b className="q-l">3. Online or offline?{sepOn ? ' (all other students)' : ''}</b>
+          <b className="q-l">{noCourse ? 2 : 3}. Online or offline?{sepOn ? ' (all other students)' : ''}</b>
           <div className="seg" role="group" aria-label="Online or offline">
             {[['Online', 'Online'], ['Offline', 'Offline'], ['Both', 'Both (labs first, the rest offline)']].map(([m, l]) => (
               <button key={m} className={r.mode === m ? 'on' : ''} onClick={() => apply({ mode: m })}>{l}</button>
@@ -1287,7 +1326,7 @@ function LabSeats({ labSeats, labsOn, adjustLabs, setLabCap }) {
   );
 }
 
-function PaperCard({ part = 'setup', p, i, n, setPaper, setSlot, remove, courses, phases, ownerOf, slotOf, phaseBatches, studentsByBatch, studentMode, setStudentMode, top, setTop, sumSlot, ok, start, labs, blds }) {
+function PaperCard({ part = 'setup', p, i, n, setPaper, setSlot, remove, courses, phases, ownerOf, slotOf, phaseBatches, studentsByBatch, studentMode, setStudentMode, top, setTop, sumSlot, ok, start, labs, blds, noCourse }) {
   const toggleCourse = (c) => {
     const cs = toggleIn(p.courses, c);
     setPaper(p.id, { courses: cs, slots: p.slots.map((s) => ({ ...s, ...keepBatches(s, phases, s.phases.filter((k) => cs.includes(k.split('|')[0]))) })) });
@@ -1302,7 +1341,7 @@ function PaperCard({ part = 'setup', p, i, n, setPaper, setSlot, remove, courses
     <div className="card paper">
       <div className="paper-top">
         <span className="slot-n">{i + 1}</span>
-        <b className="grow">{n > 1 ? `Test ${i + 1}` : 'Test'}{p.courses.length ? ` · ${p.courses.join(', ')}` : ''}</b>
+        <b className="grow">{n > 1 ? `Test ${i + 1}` : 'Test'}{p.courses.length && !noCourse ? ` · ${p.courses.join(', ')}` : ''}</b>
         {part === 'mode' ? <span className="muted small">{pl(p.slots.length, 'paper')}</span> : <button type="button" className="iconbtn danger" disabled={n === 1} onClick={remove} aria-label={`Remove test ${i + 1}`} title="Remove this test">{Ico.bin}</button>}
       </div>
 
@@ -1310,7 +1349,7 @@ function PaperCard({ part = 'setup', p, i, n, setPaper, setSlot, remove, courses
         <ModeBox key={s.id} p={p} s={s} k={k} setSlot={setSlot} studentsByBatch={studentsByBatch} studentMode={studentMode} setStudentMode={setStudentMode} top={top} setTop={setTop} sum={sumSlot(p, s)} />
       ))}
 
-      {part === 'setup' && <div className="q">
+      {part === 'setup' && !noCourse && <div className="q">
         <b className="q-l">1. Courses</b>
         <div className="chips">
           {courses.map((c) => <button key={c} type="button" className={`chip-btn ${p.courses.includes(c) ? 'on' : ''}`} onClick={() => toggleCourse(c)}>{c}</button>)}
@@ -1319,7 +1358,7 @@ function PaperCard({ part = 'setup', p, i, n, setPaper, setSlot, remove, courses
 
       {part === 'setup' && p.courses.length > 0 && (
         <div className="q">
-          <b className="q-l">2. Papers</b>
+          <b className="q-l">{noCourse ? 1 : 2}. Papers</b>
           {p.slots.map((s, k) => (
             <PaperBox key={s.id} p={p} s={s} k={k} setPaper={setPaper} setSlot={setSlot} phases={phases} ownerOf={ownerOf} slotOf={slotOf}
               pb={phaseBatches(s)} studentsByBatch={studentsByBatch} studentMode={studentMode} setStudentMode={setStudentMode}
@@ -1762,11 +1801,9 @@ function CapacityTool({ buildings, roomsIn, inUse, adjustCap }) {
   );
 }
 
-// Seating rules (step 1, folded): seat order for the whole test, brothers and sisters apart, SMD groups
+// Seating rules (step 1, folded): seat order for the whole test, brothers and sisters apart
 function SeatRules({ settings, setSettings, students }) {
   const COL = { name: ['Student_Name', 'student name'], father: ['Father_Name', "father's name"], dob: ['DOB', 'date of birth'], contact: ['Contact_Number', 'contact number'] };
-  const groups = settings.cbGroups;
-  const setGroups = (g) => setSettings((s) => ({ ...s, cbGroups: g }));
   const order = settings.seatOrder || 'mixed';
   return (
     <>
@@ -1792,15 +1829,6 @@ function SeatRules({ settings, setSettings, students }) {
         {' '}<input type="time" value={settings.girlsLate?.after || '17:30'} onChange={(e) => setSettings((x) => ({ ...x, girlsLate: { on: true, ...(x.girlsLate || {}), after: e.target.value || '17:30' } }))} aria-label="Girls rule time" />
         {' '}(their girls swap places with boys of one batch from an earlier time)</label>
       <label className="small"><input type="checkbox" checked={!!settings.apart} onChange={(e) => setSettings((x) => ({ ...x, apart: e.target.checked }))} /> Keep brothers and sisters apart (same father's name or same contact number never side by side)</label>
-      <p className="small"><b>SMD sheet groups</b></p>
-      {groups.map((g, i) => (
-        <div className="group-row" key={i}>
-          <input type="text" placeholder="Group name, e.g. Momentum XA" value={g.name} onChange={(e) => setGroups(groups.map((y, j) => (j === i ? { ...y, name: e.target.value } : y)))} aria-label="Group name" />
-          <input type="text" className="grow" placeholder="Batches, e.g. XA1, XA2, XA3" value={g.batches} onChange={(e) => setGroups(groups.map((y, j) => (j === i ? { ...y, batches: e.target.value } : y)))} aria-label="Batches in this group" />
-          <button className="iconbtn danger" onClick={() => setGroups(groups.filter((_, j) => j !== i))} aria-label="Remove group">{Ico.bin}</button>
-        </div>
-      ))}
-      <button type="button" className="addslot" onClick={() => setGroups([...groups, { name: '', batches: '' }])}>{Ico.plus}Add a group</button>
     </>
   );
 }
@@ -1956,7 +1984,35 @@ function SeatingBlock({ x, order, look }) {
     </div>
   );
 }
-function ResultStep({ results, metaFor, order, reshuffle, download, downloadBoard, boardData = [], back, dateISO }) {
+// SMD sheet, asked at the end: which paper codes there are and which batches write each code.
+// The SMD sheet then counts students per room under each paper code.
+function SmdCodes({ batches, codes, setCodes }) {
+  const list = codes.length ? codes : [{ name: '', batches: [] }];
+  const set = (i, f) => setCodes((cur) => { const l = cur.length ? cur : [{ name: '', batches: [] }]; return l.map((c, j) => (j === i ? { ...c, ...(typeof f === 'function' ? f(c) : f) } : c)); });
+  const owner = {};
+  list.forEach((c, i) => c.batches.forEach((b) => { owner[b] = i; }));
+  const left = batches.filter((b) => owner[b] === undefined);
+  const named = list.some((c) => c.name.trim() && c.batches.length);
+  return (
+    <div className="card smdcodes">
+      <div className="smd-head"><b>Paper codes for the SMD sheet</b><span className="muted small">{named ? (left.length ? `${pl(left.length, 'batch')} without a code: they go under “No paper code”` : 'Every batch has a paper code') : 'Add each paper code and tick its batches. Left empty, the SMD sheet counts by phase.'}</span></div>
+      {list.map((c, i) => (
+        <div className="smd-row" key={i}>
+          <div className="row"><input type="text" placeholder="Paper code, e.g. P1" value={c.name} onChange={(e) => set(i, { name: e.target.value })} aria-label={`Paper code ${i + 1}`} />
+            <button type="button" className="link small" onClick={() => set(i, { batches: [...new Set([...c.batches, ...left])] })}>Add all batches left</button>
+            <button type="button" className="iconbtn danger" onClick={() => setCodes(list.filter((_, j) => j !== i))} aria-label="Remove paper code">{Ico.bin}</button></div>
+          <div className="chips">{batches.map((b) => {
+            const mine = c.batches.includes(b), other = !mine && owner[b] !== undefined;
+            return <button key={b} type="button" disabled={other} title={other ? `In ${list[owner[b]].name || 'another code'}` : ''} className={`chip-btn ${mine ? 'on' : ''}`} onClick={() => set(i, (cc) => ({ batches: mine ? cc.batches.filter((x) => x !== b) : [...new Set([...cc.batches, b])] }))}>{b}</button>;
+          })}</div>
+        </div>
+      ))}
+      <button type="button" className="addslot" onClick={() => setCodes([...list, { name: '', batches: [] }])}>{Ico.plus}Add a paper code</button>
+    </div>
+  );
+}
+
+function ResultStep({ results, metaFor, order, reshuffle, download, downloadBoard, boardData = [], back, dateISO, smdCodes = [], setSmdCodes }) {
   const [menu, setMenu] = useState(false);
   const [board, setBoard] = useState(false);
   const [bld, setBld] = useState('*');
@@ -1991,6 +2047,7 @@ function ResultStep({ results, metaFor, order, reshuffle, download, downloadBoar
         <div className="rhero-art"><Seats3D full missing={unseated.length} /></div>
       </div>
       {!ok && <div className="alert bad"><span>They are in the Not_Seated sheet with the reason. Add a building or room and prepare again.</span><button className="btn sm" onClick={back}>Add rooms</button></div>}
+      <SmdCodes batches={[...new Set(all.map((x) => x.Batch))].sort(naturalCompare)} codes={smdCodes} setCodes={setSmdCodes} />
       <div className="ractions">
         <button className="btn cta xl" onClick={download} disabled={!files} title="Seating plan, student list, attendance, SMD, room layout and master list in one Excel file">{Ico.down}Download seating sheet</button>
         <div className="menu">

@@ -41,7 +41,7 @@ function titleRow(ws, row, text, cols, opts) {
 }
 
 const labelsOf = (meta) => (meta.slots && meta.slots.length
-  ? meta.slots.map((s) => (s.label ? `${s.label}: ` : '') + fmtTime(s.start) + (s.end ? ` to ${fmtTime(s.end)}` : ''))
+  ? meta.slots.map((s) => (s.label ? `${s.label}: ` : '') + fmtTime(s.start))
   : (meta.shifts || []).map(fmtTime));
 const inRoom = (rows, room) => rows.filter((s) => s.Building === room.building && String(s['Room No.']) === String(room.room));
 
@@ -291,7 +291,7 @@ export function buildNoticeBoard(ExcelJS, items, dayMeta) {
     title: meta.title,
     rows: result.assigned,
     rooms: result.usedRooms,
-    shiftLabels: (meta.slots || []).map((s) => (s.label ? `${s.label}: ` : '') + fmtTime(s.start) + (s.end ? ` to ${fmtTime(s.end)}` : '')),
+    shiftLabels: (meta.slots || []).map((s) => (s.label ? `${s.label}: ` : '') + fmtTime(s.start)),
   }));
   noticeBoard(wb.addWorksheet('Notice_Board'), papers, dayMeta);
   return wb;

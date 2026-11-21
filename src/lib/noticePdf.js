@@ -14,7 +14,7 @@ export const floorText = (f) => (f === '' ? 'No floor set' : f === '0' ? 'Ground
 const byFloor = (a, b) => naturalCompare(a === '' ? '~' : a, b === '' ? '~' : b);
 
 const labelsOf = (meta) => (meta.slots && meta.slots.length
-  ? meta.slots.map((s) => (s.label ? `${s.label}: ` : '') + fmtTime(s.start) + (s.end ? ` to ${fmtTime(s.end)}` : ''))
+  ? meta.slots.map((s) => (s.label ? `${s.label}: ` : '') + fmtTime(s.start))
   : (meta.shifts || []).map(fmtTime));
 
 // items: [{ result, meta }] as for the Excel file. Every seated student gets building and floor for the filters.
